@@ -106,6 +106,17 @@ struct SettingsView: View {
                     Text("When enabled, images found in the page are downloaded to an images/ subfolder. OCR extracts text from images and includes it in the note as a blockquote.")
                 }
 
+                // MARK: - Site Logins
+                Section {
+                    NavigationLink {
+                        SiteLoginView()
+                    } label: {
+                        Label("Site Logins", systemImage: "person.badge.key")
+                    }
+                } footer: {
+                    Text("Log in to paywalled sites so clips capture the full article instead of the preview.")
+                }
+
                 // MARK: - How to Use
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
@@ -136,6 +147,11 @@ struct SettingsView: View {
                         Text("\(extensionLaunchCount)")
                             .foregroundStyle(.secondary)
                             .font(.caption.monospacedDigit())
+                    }
+                    NavigationLink {
+                        DiagnosticsView()
+                    } label: {
+                        Label("Recent Clips", systemImage: "list.bullet.rectangle")
                     }
                 } header: {
                     Text("Diagnostics")

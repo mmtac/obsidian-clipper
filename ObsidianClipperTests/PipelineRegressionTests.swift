@@ -27,6 +27,10 @@ final class PipelineRegressionTests: XCTestCase {
         let min_body_chars: Int
         let max_total_images: Int?
         let min_total_images: Int?
+        /// When set ("paywalled" | "thinContent"), the fixture is a failed
+        /// capture (e.g. an anonymous paywall shell): the quality gate must
+        /// reject it with the named verdict and no other criteria apply.
+        let expect_failure: String?
     }
 
     // MARK: - Paths
@@ -84,6 +88,21 @@ final class PipelineRegressionTests: XCTestCase {
         let baseURL = baseURLString.flatMap { URL(string: $0) }
 
         let result = EvalEntryPoint.extract(html: html, baseURL: baseURL)
+
+        // Expected-failure fixtures (paywall shells) assert only the gate
+        // verdict: the pipeline must refuse to save them.
+        if let expectedFailure = expected.expect_failure {
+            let verdict = ContentQualityGate.evaluate(markdown: result.markdown, html: html)
+            switch expectedFailure {
+            case "paywalled":
+                XCTAssertEqual(verdict, .paywalled, "[\(slug)] expected gate verdict .paywalled, got \(verdict)")
+            case "thinContent":
+                XCTAssertEqual(verdict, .thinContent, "[\(slug)] expected gate verdict .thinContent, got \(verdict)")
+            default:
+                XCTFail("[\(slug)] unknown expect_failure value: \(expectedFailure)")
+            }
+            return
+        }
 
         // Title
         if let needle = expected.title_contains {

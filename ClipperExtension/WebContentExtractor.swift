@@ -13,6 +13,22 @@ enum WebContentExtractor {
         return URLSession(configuration: config)
     }()
 
+    /// Test seam: when set, fetches go through this session instead of the
+    /// default one (lets tests register a mock URLProtocol). Production never
+    /// touches it.
+    static var sessionOverride: URLSession?
+
+    /// Site-login cookies harvested by the main app. The re-fetch path
+    /// attaches these so paywalled pages return the full article instead of
+    /// the anonymous shell. Swappable for tests.
+    static var cookieStore: CookieStoring = KeychainCookieStore.shared
+
+    /// Live HTML from the share sheet below this byte count is treated as
+    /// missing so the (possibly authenticated) re-fetch runs instead — iOS
+    /// truncating an oversized `Action.js` payload can surface as a tiny
+    /// fragment. Tests set 0 to pass small inline fixtures through.
+    static var minimumLiveHTMLBytes = 1024
+
     struct RawContent {
         let title: String
         let url: URL?
@@ -28,6 +44,9 @@ enum WebContentExtractor {
         /// itself is the payload, so a failed fetch should still save the text;
         /// for an explicitly-shared URL a failed fetch has nothing worth saving.
         let urlFromPlainText: Bool
+        /// Which path produced the payload — recorded for diagnostics so
+        /// failures can be traced to the capture stage after the fact.
+        let captureSource: CaptureSource
     }
 
     /// Typed failure for the URL re-fetch path so the share UI can name the cause.
@@ -68,6 +87,7 @@ enum WebContentExtractor {
         var plainText: String?
         var title: String?
         var sharedImages: [Data] = []
+        var htmlSource: CaptureSource = .none
 
         for item in items {
             // Grab the attributed title if available
@@ -89,6 +109,7 @@ enum WebContentExtractor {
                 if provider.hasItemConformingToTypeIdentifier("public.html") {
                     if let loaded = try? await provider.loadItem(forTypeIdentifier: "public.html") as? String {
                         html = loaded
+                        htmlSource = .providedHTML
                     }
                 }
 
@@ -116,6 +137,7 @@ enum WebContentExtractor {
                             }
                             if let pageHTML = results["html"] as? String {
                                 html = pageHTML
+                                htmlSource = .jsPreprocessing
                             }
                         }
                     }
@@ -141,11 +163,27 @@ enum WebContentExtractor {
             }
         }
 
+        // Live HTML that is suspiciously tiny is treated as missing when we
+        // have a URL to re-fetch — a truncated Action.js payload otherwise
+        // produces a title-only note with no error.
+        if let liveHTML = html, url != nil, liveHTML.utf8.count < minimumLiveHTMLBytes {
+            NSLog("[Clipper.extract] live html too small (%d bytes, source=%@); discarding for re-fetch",
+                  liveHTML.utf8.count, htmlSource.rawValue as NSString)
+            html = nil
+            htmlSource = .none
+        }
+
         // If we have a URL but no HTML, fetch the page content
         var fetchErrorDescription: String?
         if html == nil, let pageURL = url {
             do {
-                html = try await fetchHTML(from: pageURL)
+                let fetched = try await fetchHTML(from: pageURL)
+                html = fetched.html
+                htmlSource = fetched.authenticated ? .refetchAuthenticated : .refetchAnonymous
+                NSLog("[Clipper.extract] re-fetched %@ (%@, %d chars)",
+                      pageURL.absoluteString as NSString,
+                      htmlSource.rawValue as NSString,
+                      fetched.html.count)
             } catch is CancellationError {
                 return nil
             } catch {
@@ -173,6 +211,17 @@ enum WebContentExtractor {
             }
         }
 
+        let captureSource: CaptureSource
+        if html != nil {
+            captureSource = htmlSource
+        } else if !sharedImages.isEmpty && url == nil {
+            captureSource = .image
+        } else if plainText != nil {
+            captureSource = .plainText
+        } else {
+            captureSource = .none
+        }
+
         return RawContent(
             title: title!,
             url: url,
@@ -180,7 +229,8 @@ enum WebContentExtractor {
             plainText: plainText,
             sharedImages: sharedImages,
             fetchErrorDescription: fetchErrorDescription,
-            urlFromPlainText: urlFromPlainText
+            urlFromPlainText: urlFromPlainText,
+            captureSource: captureSource
         )
     }
 
@@ -229,7 +279,7 @@ enum WebContentExtractor {
     /// Transient failures (timeout, connection reset, 5xx, 429) are retried up to
     /// `maxFetchRetries` times with jittered exponential backoff; permanent
     /// failures (other 4xx) throw immediately.
-    private static func fetchHTML(from url: URL) async throws -> String {
+    private static func fetchHTML(from url: URL) async throws -> (html: String, authenticated: Bool) {
         guard isAllowedScheme(url) else {
             throw FetchError.network("Unsupported URL scheme.")
         }
@@ -239,6 +289,25 @@ enum WebContentExtractor {
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
             forHTTPHeaderField: "User-Agent"
         )
+        request.setValue(
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            forHTTPHeaderField: "Accept"
+        )
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+
+        // Attach site-login cookies harvested by the main app, so paywalled
+        // pages (NYT etc.) serve the full article. Cookie handling is manual
+        // here: the extension's own cookie jar must not overwrite the stored
+        // session, and Set-Cookie refreshes are merged back explicitly below.
+        let storedCookies = cookieStore.cookies(for: url)
+        let authenticated = !storedCookies.isEmpty
+        if authenticated {
+            request.httpShouldHandleCookies = false
+            let fields = HTTPCookie.requestHeaderFields(with: storedCookies)
+            if let cookieHeader = fields["Cookie"] {
+                request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+            }
+        }
 
         var lastError: FetchError = .network("Unknown error.")
 
@@ -254,7 +323,7 @@ enum WebContentExtractor {
             let data: Data
             let response: URLResponse
             do {
-                (data, response) = try await session.data(for: request)
+                (data, response) = try await (sessionOverride ?? session).data(for: request)
             } catch {
                 if (error as? URLError)?.code == .cancelled {
                     throw CancellationError()
@@ -277,9 +346,19 @@ enum WebContentExtractor {
                 throw lastError
             }
 
+            // Persist any refreshed session cookies so a rotating login
+            // (NYT rotates NYT-S periodically) stays valid between clips.
+            if authenticated {
+                let headerFields = (httpResponse.allHeaderFields as? [String: String]) ?? [:]
+                let refreshed = HTTPCookie.cookies(withResponseHeaderFields: headerFields, for: url)
+                if !refreshed.isEmpty {
+                    cookieStore.merge(refreshed)
+                }
+            }
+
             let encoding = Self.detectEncoding(response: httpResponse, body: data)
             if let html = String(data: data, encoding: encoding) ?? String(data: data, encoding: .utf8) {
-                return html
+                return (html, authenticated)
             }
             throw FetchError.undecodable
         }

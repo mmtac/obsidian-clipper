@@ -37,6 +37,23 @@ final class WebContentExtractorIntegrationTests: XCTestCase {
         return await WebContentExtractor.extract(from: context)
     }
 
+    // These scenarios use deliberately tiny HTML payloads and example.com
+    // URLs. Disable the thin-live-HTML discard so the payloads survive, and
+    // stub the session so any fallback fetch fails fast instead of touching
+    // the network.
+    override func setUp() {
+        super.setUp()
+        WebContentExtractor.minimumLiveHTMLBytes = 0
+        WebContentExtractor.sessionOverride = MockURLProtocol.makeRefusingSession()
+    }
+
+    override func tearDown() {
+        WebContentExtractor.minimumLiveHTMLBytes = 1024
+        WebContentExtractor.sessionOverride = nil
+        MockURLProtocol.handler = nil
+        super.tearDown()
+    }
+
     // MARK: - Scenarios
 
     /// Scenario 1: Safari-style — single item with two providers, one with
