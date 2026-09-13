@@ -1,0 +1,10 @@
+{
+  "title_contains": "OpenAI breakup",
+  "must_contain": [
+    "anything untoward or surprising"
+  ],
+  "must_not_contain": [],
+  "min_body_chars": 500,
+  "max_total_images": 20,
+  "ocr_must_not_contain": []
+}

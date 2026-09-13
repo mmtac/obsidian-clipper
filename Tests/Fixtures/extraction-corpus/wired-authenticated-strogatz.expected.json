@@ -1,0 +1,13 @@
+{
+  "title_contains": "Mathematician",
+  "must_contain": [
+    "His book collaborator, Alex Townsend"
+  ],
+  "must_not_contain": [
+    "Top Canon Promo Codes"
+  ],
+  "min_body_chars": 5000,
+  "min_total_images": 1,
+  "max_total_images": 6,
+  "ocr_must_not_contain": []
+}

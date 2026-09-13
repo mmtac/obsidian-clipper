@@ -1,0 +1,8 @@
+{
+  "title_contains": null,
+  "must_contain": [],
+  "must_not_contain": [],
+  "min_body_chars": 0,
+  "expect_failure": "paywalled",
+  "ocr_must_not_contain": []
+}

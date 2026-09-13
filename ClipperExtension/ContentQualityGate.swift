@@ -48,7 +48,23 @@ enum ContentQualityGate {
         options: []
     )
 
+    /// Meter/paywall boilerplate that gets extracted INTO the body when a
+    /// gated page is captured anonymously. NYT serves a truncated article
+    /// plus these strings and gates client-side — the capture can be
+    /// thousands of characters and still be a partial article, so these
+    /// override the length check.
+    private static let markdownPaywallMarkers = [
+        "while we verify access",
+        "already a subscriber? log in",
+        "want all of the times? subscribe",
+    ]
+
     static func evaluate(markdown: String, html: String) -> Verdict {
+        let lowerMarkdown = markdown.lowercased()
+        for marker in markdownPaywallMarkers where lowerMarkdown.contains(marker) {
+            return .paywalled
+        }
+
         let chars = markdown.filter { !$0.isWhitespace }.count
         if chars >= paywallSafeThreshold {
             return .pass
