@@ -1,0 +1,5 @@
+Microsoft AI CEO Mustafa Suleyman came on Decoder this week to talk about the path to superintelligence and the company’s ever-evolving relationship with OpenAI. When asked whether Microsoft was using Build to flex its independence from OpenAI like a “freshly single divorcée,” Suleyman had this to say:
+
+> Definitely not. No, not at all. Look, I mean, obviously that’s a cool headline and a fun phrase. But the reality is that we are in partnership with OpenAI for years and years to come… So naturally, that’s going to continue. And so I think that’s just a natural course of these sorts of partnerships.
+
+> I don’t think it’s anything untoward or surprising. I think OpenAI is very understanding and supportive of that. I mean, they’ve obviously been an incredibly fast-growing company, and they understand that we have to pursue our own agenda as well.

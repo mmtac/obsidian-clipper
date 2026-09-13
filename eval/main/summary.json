@@ -14,7 +14,7 @@
     "body_chars_ok": true,
     "image_count": 1,
     "image_count_ok": true,
-    "duration_ms": 6744.67
+    "duration_ms": 6178.72
   },
   {
     "fixture": "electrek-bluetti",
@@ -29,7 +29,7 @@
     "body_chars_ok": true,
     "image_count": 7,
     "image_count_ok": true,
-    "duration_ms": 165.74
+    "duration_ms": 147.80
   },
   {
     "fixture": "example-baseline",
@@ -44,7 +44,7 @@
     "body_chars_ok": true,
     "image_count": 0,
     "image_count_ok": true,
-    "duration_ms": 1.16
+    "duration_ms": 1.70
   },
   {
     "fixture": "fnn-ai-productivity",
@@ -59,7 +59,7 @@
     "body_chars_ok": true,
     "image_count": 0,
     "image_count_ok": true,
-    "duration_ms": 186.75
+    "duration_ms": 172.06
   },
   {
     "fixture": "fnn-ex-feds",
@@ -74,7 +74,7 @@
     "body_chars_ok": true,
     "image_count": 0,
     "image_count_ok": true,
-    "duration_ms": 230.87
+    "duration_ms": 217.84
   },
   {
     "fixture": "fnn-fbi",
@@ -89,7 +89,7 @@
     "body_chars_ok": true,
     "image_count": 0,
     "image_count_ok": true,
-    "duration_ms": 155.38
+    "duration_ms": 153.60
   },
   {
     "fixture": "hn-front",
@@ -104,7 +104,52 @@
     "body_chars_ok": true,
     "image_count": 1,
     "image_count_ok": true,
-    "duration_ms": 218.74
+    "duration_ms": 247.06
+  },
+  {
+    "fixture": "nyt-anon-hormuz",
+    "approach": "main",
+    "all_passed": true,
+    "title_ok": true,
+    "must_contain_passed": 0,
+    "must_contain_total": 0,
+    "must_not_contain_passed": 0,
+    "must_not_contain_total": 0,
+    "body_chars": 2340,
+    "body_chars_ok": true,
+    "image_count": 0,
+    "image_count_ok": true,
+    "duration_ms": 97.87
+  },
+  {
+    "fixture": "nyt-authenticated-hormuz",
+    "approach": "main",
+    "all_passed": true,
+    "title_ok": true,
+    "must_contain_passed": 1,
+    "must_contain_total": 1,
+    "must_not_contain_passed": 1,
+    "must_not_contain_total": 1,
+    "body_chars": 6454,
+    "body_chars_ok": true,
+    "image_count": 8,
+    "image_count_ok": true,
+    "duration_ms": 286.95
+  },
+  {
+    "fixture": "theverge-authenticated-suleyman",
+    "approach": "main",
+    "all_passed": true,
+    "title_ok": true,
+    "must_contain_passed": 1,
+    "must_contain_total": 1,
+    "must_not_contain_passed": 0,
+    "must_not_contain_total": 0,
+    "body_chars": 711,
+    "body_chars_ok": true,
+    "image_count": 0,
+    "image_count_ok": true,
+    "duration_ms": 5.30
   },
   {
     "fixture": "theverge-front",
@@ -119,7 +164,7 @@
     "body_chars_ok": true,
     "image_count": 47,
     "image_count_ok": true,
-    "duration_ms": 2103.03
+    "duration_ms": 2068.67
   },
   {
     "fixture": "wired-anthropic",
@@ -134,7 +179,22 @@
     "body_chars_ok": true,
     "image_count": 1,
     "image_count_ok": true,
-    "duration_ms": 11.99
+    "duration_ms": 11.30
+  },
+  {
+    "fixture": "wired-authenticated-strogatz",
+    "approach": "main",
+    "all_passed": true,
+    "title_ok": true,
+    "must_contain_passed": 1,
+    "must_contain_total": 1,
+    "must_not_contain_passed": 1,
+    "must_not_contain_total": 1,
+    "body_chars": 6631,
+    "body_chars_ok": true,
+    "image_count": 1,
+    "image_count_ok": true,
+    "duration_ms": 12.89
   },
   {
     "fixture": "wired-michael",
@@ -149,7 +209,7 @@
     "body_chars_ok": true,
     "image_count": 1,
     "image_count_ok": true,
-    "duration_ms": 11.73
+    "duration_ms": 11.36
   }
   ]
 }

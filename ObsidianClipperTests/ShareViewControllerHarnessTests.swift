@@ -39,6 +39,9 @@ final class ShareViewControllerHarnessTests: XCTestCase {
         tempVault = FileManager.default.temporaryDirectory
             .appendingPathComponent("clipper-harness-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempVault, withIntermediateDirectories: true)
+        // Some scenarios pass small inline HTML; keep the thin-live-HTML
+        // discard out of the way unless a test opts back in.
+        WebContentExtractor.minimumLiveHTMLBytes = 0
     }
 
     override func tearDown() async throws {
@@ -46,6 +49,10 @@ final class ShareViewControllerHarnessTests: XCTestCase {
             try? FileManager.default.removeItem(at: tempVault)
         }
         clearSeededDefaults()
+        WebContentExtractor.minimumLiveHTMLBytes = 1024
+        WebContentExtractor.sessionOverride = nil
+        WebContentExtractor.cookieStore = KeychainCookieStore.shared
+        MockURLProtocol.handler = nil
         try await super.tearDown()
     }
 
@@ -284,16 +291,117 @@ final class ShareViewControllerHarnessTests: XCTestCase {
         )
     }
 
+    // MARK: - URL-only shares (the Reeder path)
+
+    /// Synthetic "NYT" article served by the mock session: full body when the
+    /// request carries the stored session cookie, anonymous paywall shell
+    /// otherwise. Mirrors how nytimes.com behaves for `NYT-S`.
+    private func installNYTHandler() {
+        let paragraphs = (1...30).map { "<p>Paragraph \($0) of the full authenticated article body, with enough prose to clear every threshold.</p>" }.joined()
+        let articleBody = (1...30).map { "Paragraph \($0) of the full authenticated article body, with enough prose to clear every threshold." }.joined(separator: "\\n")
+        let fullArticle = """
+        <html><head><title>Test Article - The New York Times</title>
+        <script type="application/ld+json">{"@type":"NewsArticle","headline":"Test Article","isAccessibleForFree":false,"articleBody":"\(articleBody)"}</script>
+        </head><body><article>\(paragraphs)</article></body></html>
+        """
+        let shell = """
+        <html><head><title>Test Article - The New York Times</title>
+        <script type="application/ld+json">{"@type":"NewsArticle","headline":"Test Article","isAccessibleForFree":false}</script>
+        </head><body><div id="gateway-content"><p>Subscribe to continue reading.</p></div></body></html>
+        """
+        MockURLProtocol.handler = { request in
+            let authenticated = request.value(forHTTPHeaderField: "Cookie")?.contains("NYT-S") ?? false
+            let body = authenticated ? fullArticle : shell
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "text/html; charset=utf-8"]
+            )!
+            return (response, Data(body.utf8))
+        }
+        WebContentExtractor.sessionOverride = MockURLProtocol.makeSession()
+    }
+
+    private func nytSessionCookie() -> HTTPCookie {
+        HTTPCookie(properties: [
+            .name: "NYT-S",
+            .value: "test-session-token",
+            .domain: ".nytimes.com",
+            .path: "/",
+        ])!
+    }
+
+    /// A URL-only share (Reeder's shape) with a stored site login must fetch
+    /// the authenticated page and save the full article.
+    func testUrlOnlyShareWithStoredCookiesSavesFullArticle() async throws {
+        try seedVaultDefaults(targetFolder: "Inbox", saveImages: false)
+        installNYTHandler()
+        WebContentExtractor.cookieStore = InMemoryCookieStore([nytSessionCookie()])
+
+        let context = FakeExtensionContext.urlOnly(url: "https://www.nytimes.com/2026/09/01/test-article.html")
+        _ = try await ClippingPipeline.run(extensionContext: context)
+
+        let inbox = tempVault.appendingPathComponent("Inbox", isDirectory: true)
+        let articleSubfolders = try FileManager.default.contentsOfDirectory(
+            at: inbox, includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(articleSubfolders.count, 1)
+        let mdFiles = try FileManager.default
+            .contentsOfDirectory(at: articleSubfolders[0], includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "md" }
+        XCTAssertEqual(mdFiles.count, 1)
+        let markdown = try String(contentsOf: mdFiles[0], encoding: .utf8)
+        XCTAssertTrue(
+            markdown.contains("Paragraph 30 of the full authenticated article body"),
+            "Saved note should contain the authenticated article body"
+        )
+    }
+
+    /// The same URL-only share with NO stored cookies gets the paywall shell
+    /// and must throw `.paywalled` without writing anything — never a stub.
+    func testUrlOnlyPaywallShellThrowsPaywalledAndWritesNothing() async throws {
+        try seedVaultDefaults(targetFolder: "Inbox", saveImages: false)
+        installNYTHandler()
+        WebContentExtractor.cookieStore = InMemoryCookieStore()
+
+        let context = FakeExtensionContext.urlOnly(url: "https://www.nytimes.com/2026/09/01/test-article.html")
+        do {
+            _ = try await ClippingPipeline.run(extensionContext: context)
+            XCTFail("Expected ClipError.paywalled for an anonymous paywall shell")
+        } catch let error as ClipError {
+            guard case .paywalled = error else {
+                return XCTFail("Expected .paywalled, got \(error)")
+            }
+        }
+
+        let inbox = tempVault.appendingPathComponent("Inbox", isDirectory: true)
+        if FileManager.default.fileExists(atPath: inbox.path) {
+            let entries = try FileManager.default.contentsOfDirectory(
+                at: inbox, includingPropertiesForKeys: nil
+            )
+            XCTAssertTrue(
+                entries.isEmpty,
+                "A paywalled capture must not write a stub note; found \(entries.map { $0.lastPathComponent })"
+            )
+        }
+    }
+
     /// Calls `performClipping` with `vault_bookmark` cleared and asserts a
     /// `FileSaver.SaveError.noVaultConfigured` is raised. This guards against
     /// regressions in the FileSaver early-return path that have masked
     /// silent failures in the past.
     func testNoVaultConfiguredYieldsClearError() async throws {
         clearSeededDefaults()
+        // Body must be substantial enough to pass the quality gate — this
+        // test targets the FileSaver early-return, not the gate.
+        let paragraphs = (1...10)
+            .map { "<p>Paragraph \($0) with enough real prose to clear the capture quality gate comfortably.</p>" }
+            .joined()
         let context = FakeExtensionContext.safariJSResults(
             title: "Example Domain",
             url: "https://example.com/",
-            html: "<html><body><p>hello</p></body></html>"
+            html: "<html><body><article>\(paragraphs)</article></body></html>"
         )
         do {
             _ = try await ClippingPipeline.run(extensionContext: context)

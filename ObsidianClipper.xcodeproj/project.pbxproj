@@ -53,6 +53,19 @@
 		A10000091 /* SwiftSoupAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000090 /* SwiftSoupAdapter.swift */; };
 		A10000092 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = A91111002 /* SwiftSoup */; };
 		A10000093 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = A91111003 /* SwiftSoup */; };
+		A10000007 /* SiteLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000013 /* SiteLoginView.swift */; };
+		A10000008 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000014 /* DiagnosticsView.swift */; };
+		A10000009 /* ClipDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000015 /* ClipDiagnostics.swift */; };
+		A1000000A /* SiteCookieStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000016 /* SiteCookieStore.swift */; };
+		A1000002A /* ClipDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000015 /* ClipDiagnostics.swift */; };
+		A1000002B /* SiteCookieStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000016 /* SiteCookieStore.swift */; };
+		A1000002C /* ContentQualityGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000031 /* ContentQualityGate.swift */; };
+		A10000088 /* ClipDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000015 /* ClipDiagnostics.swift */; };
+		A10000089 /* SiteCookieStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000016 /* SiteCookieStore.swift */; };
+		A1000008B /* ContentQualityGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000031 /* ContentQualityGate.swift */; };
+		A10000203 /* MockURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000203 /* MockURLProtocol.swift */; };
+		A10000204 /* ContentQualityGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000204 /* ContentQualityGateTests.swift */; };
+		A10000205 /* SiteCookieStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000205 /* SiteCookieStoreTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -122,6 +135,14 @@
 		A20000078 /* JSONLDExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLDExtractor.swift; sourceTree = "<group>"; };
 		A20000079 /* JSONLDExtractorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLDExtractorTests.swift; sourceTree = "<group>"; };
 		A20000090 /* SwiftSoupAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftSoupAdapter.swift; sourceTree = "<group>"; };
+		A20000013 /* SiteLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteLoginView.swift; sourceTree = "<group>"; };
+		A20000014 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
+		A20000015 /* ClipDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipDiagnostics.swift; sourceTree = "<group>"; };
+		A20000016 /* SiteCookieStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteCookieStore.swift; sourceTree = "<group>"; };
+		A20000031 /* ContentQualityGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentQualityGate.swift; sourceTree = "<group>"; };
+		A20000203 /* MockURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/MockURLProtocol.swift; sourceTree = "<group>"; };
+		A20000204 /* ContentQualityGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentQualityGateTests.swift; sourceTree = "<group>"; };
+		A20000205 /* SiteCookieStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteCookieStoreTests.swift; sourceTree = "<group>"; };
 		A70000001 /* ObsidianClipper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ObsidianClipper.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A70000002 /* ClipperExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClipperExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A70000003 /* ObsidianClipperTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ObsidianClipperTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -146,6 +167,8 @@
 				A20000002 /* SettingsView.swift */,
 				A20000011 /* FolderPickerView.swift */,
 				A20000012 /* AboutView.swift */,
+				A20000013 /* SiteLoginView.swift */,
+				A20000014 /* DiagnosticsView.swift */,
 				A20000003 /* Assets.xcassets */,
 				A20000040 /* ObsidianClipper.entitlements */,
 			);
@@ -165,6 +188,7 @@
 				A20000028 /* ReadabilityExtractor.swift */,
 				A20000078 /* JSONLDExtractor.swift */,
 				A20000090 /* SwiftSoupAdapter.swift */,
+				A20000031 /* ContentQualityGate.swift */,
 				A20000300 /* ClippingPipeline.swift */,
 				A20000029 /* LaunchBeacon.swift */,
 				A20000030 /* Info.plist */,
@@ -178,6 +202,8 @@
 			isa = PBXGroup;
 			children = (
 				A20000010 /* ClipperSettings.swift */,
+				A20000015 /* ClipDiagnostics.swift */,
+				A20000016 /* SiteCookieStore.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -208,6 +234,9 @@
 				A20000201 /* FakeExtensionContext.swift */,
 				A20000202 /* ShareViewControllerHarnessTests.swift */,
 				A2000007A /* WebContentExtractorIntegrationTests.swift */,
+				A20000203 /* MockURLProtocol.swift */,
+				A20000204 /* ContentQualityGateTests.swift */,
+				A20000205 /* SiteCookieStoreTests.swift */,
 			);
 			path = ObsidianClipperTests;
 			sourceTree = "<group>";
@@ -347,6 +376,10 @@
 				A10000004 /* ClipperSettings.swift in Sources */,
 				A10000005 /* FolderPickerView.swift in Sources */,
 				A10000006 /* AboutView.swift in Sources */,
+				A10000007 /* SiteLoginView.swift in Sources */,
+				A10000008 /* DiagnosticsView.swift in Sources */,
+				A10000009 /* ClipDiagnostics.swift in Sources */,
+				A1000000A /* SiteCookieStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -367,6 +400,9 @@
 				A10000090 /* SwiftSoupAdapter.swift in Sources */,
 				A10000300 /* ClippingPipeline.swift in Sources */,
 				A10000029 /* LaunchBeacon.swift in Sources */,
+				A1000002A /* ClipDiagnostics.swift in Sources */,
+				A1000002B /* SiteCookieStore.swift in Sources */,
+				A1000002C /* ContentQualityGate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -397,6 +433,12 @@
 				A10000301 /* ClippingPipeline.swift in Sources */,
 				A10000079 /* JSONLDExtractorTests.swift in Sources */,
 				A10000091 /* SwiftSoupAdapter.swift in Sources */,
+				A10000088 /* ClipDiagnostics.swift in Sources */,
+				A10000089 /* SiteCookieStore.swift in Sources */,
+				A1000008B /* ContentQualityGate.swift in Sources */,
+				A10000203 /* MockURLProtocol.swift in Sources */,
+				A10000204 /* ContentQualityGateTests.swift in Sources */,
+				A10000205 /* SiteCookieStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -492,7 +534,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ObsidianClipper/ObsidianClipper.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = Z387TXCHZ9;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -516,7 +558,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ObsidianClipper/ObsidianClipper.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = Z387TXCHZ9;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -538,7 +580,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ClipperExtension/ClipperExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = Z387TXCHZ9;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ClipperExtension/Info.plist;
@@ -557,7 +599,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ClipperExtension/ClipperExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = Z387TXCHZ9;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ClipperExtension/Info.plist;
@@ -575,7 +617,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = Z387TXCHZ9;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
@@ -590,7 +632,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = Z387TXCHZ9;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;

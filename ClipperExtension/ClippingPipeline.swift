@@ -11,6 +11,8 @@ enum ClipError: LocalizedError {
     case noContent
     case fetchFailed(String)
     case cancelled
+    case paywalled
+    case thinContent
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +22,10 @@ enum ClipError: LocalizedError {
             return "Couldn't fetch the page — \(detail) Try opening it in Safari and sharing from there."
         case .cancelled:
             return "Clipping was cancelled."
+        case .paywalled:
+            return "This looks like a paywall or login wall — only a preview was captured. Log in under Settings → Site Logins in the Obsidian Clipper app, or open the page in Safari and share from there."
+        case .thinContent:
+            return "Couldn't extract meaningful content from this page. Try opening it in Safari and sharing from there."
         }
     }
 }
@@ -64,6 +70,7 @@ enum ClippingPipeline {
     ) async throws -> String {
         let settings = ClipperSettings()
         let saveConfig = FileSaver.SaveConfig(from: settings)
+        let clipStart = Date()
 
         onState?("Extracting content…")
 
@@ -86,6 +93,7 @@ enum ClippingPipeline {
            let fetchError = rawContent.fetchErrorDescription,
            rawContent.sharedImages.isEmpty,
            !rawContent.urlFromPlainText {
+            recordDiagnostics(rawContent, route: "none", markdownBody: "", outcome: "fetchFailed", since: clipStart)
             throw ClipError.fetchFailed(fetchError)
         }
 
@@ -96,10 +104,12 @@ enum ClippingPipeline {
         var articleTitle = rawContent.title
         var markdownBody: String
         var markerMap: [Int: URL] = [:]
+        var extractionRoute = "none"
 
         if isImageOnly {
             onState?("Processing images…")
             markdownBody = ""
+            extractionRoute = "imageOnly"
         } else if let html = rawContent.html {
             // Scope a `do` block so the large intermediate HTML string
             // (markedHTML) is released before image processing begins.
@@ -128,6 +138,7 @@ enum ClippingPipeline {
                     if !ld.title.isEmpty {
                         articleTitle = ld.title
                     }
+                    extractionRoute = "jsonld"
                     try Task.checkCancellation()
                 } else {
                     NSLog("[Clipper.pipeline] JSON-LD fast path MISS; falling through to Readability")
@@ -144,14 +155,17 @@ enum ClippingPipeline {
                         let candidateMarkdown = HTMLToMarkdown.convert(node: result.articleNode)
                         if candidateMarkdown.filter({ !$0.isWhitespace }).count >= 100 {
                             markdownBody = candidateMarkdown
+                            extractionRoute = "readability"
                             if let extractedTitle = result.title, !extractedTitle.isEmpty {
                                 articleTitle = extractedTitle
                             }
                         } else {
                             markdownBody = HTMLToMarkdown.convert(markedHTML)
+                            extractionRoute = "fullPage"
                         }
                     } else {
                         markdownBody = HTMLToMarkdown.convert(markedHTML)
+                        extractionRoute = "fullPage"
                     }
 
                     try Task.checkCancellation()
@@ -160,11 +174,33 @@ enum ClippingPipeline {
         } else if let plain = rawContent.plainText {
             onState?("Saving text…")
             markdownBody = plain
+            extractionRoute = "plainText"
         } else {
             markdownBody = ""
         }
 
         try Task.checkCancellation()
+
+        // Quality gate: a URL-backed clip whose extraction produced almost
+        // nothing is a failed capture (paywall shell, login wall, consent
+        // page). Surface a named error and write nothing — never a stub note.
+        // Image-only clips and text-primary shares are exempt: their payload
+        // isn't the page.
+        if !isImageOnly,
+           rawContent.url != nil,
+           !rawContent.urlFromPlainText,
+           let html = rawContent.html {
+            switch ContentQualityGate.evaluate(markdown: markdownBody, html: html) {
+            case .pass:
+                break
+            case .paywalled:
+                recordDiagnostics(rawContent, route: extractionRoute, markdownBody: markdownBody, outcome: "paywalled", since: clipStart)
+                throw ClipError.paywalled
+            case .thinContent:
+                recordDiagnostics(rawContent, route: extractionRoute, markdownBody: markdownBody, outcome: "thinContent", since: clipStart)
+                throw ClipError.thinContent
+            }
+        }
 
         var images: [ExtractedImage] = []
         let prefix = Self.shortHash(title: rawContent.title, url: rawContent.url)
@@ -225,6 +261,8 @@ enum ClippingPipeline {
         onState?("Saving to vault…")
         try FileSaver.save(clipResult, config: saveConfig)
 
+        recordDiagnostics(rawContent, route: extractionRoute, markdownBody: markdownBody, outcome: "saved", since: clipStart)
+
         // Note: the caller is responsible for cleaning up the
         // `ImageProcessor` it received via `onImageProcessor`. Production
         // (`ShareViewController`) does this in `done()` / `cancel()`.
@@ -233,6 +271,25 @@ enum ClippingPipeline {
     }
 
     // MARK: - Helpers
+
+    private static func recordDiagnostics(
+        _ rawContent: WebContentExtractor.RawContent,
+        route: String,
+        markdownBody: String,
+        outcome: String,
+        since start: Date
+    ) {
+        ClipDiagnostics.record(ClipRecord(
+            date: Date(),
+            host: rawContent.url?.host,
+            source: rawContent.captureSource,
+            htmlChars: rawContent.html?.count,
+            route: route,
+            markdownChars: markdownBody.filter { !$0.isWhitespace }.count,
+            outcome: outcome,
+            elapsedMs: Int(Date().timeIntervalSince(start) * 1000)
+        ))
+    }
 
     /// Short hex hash identifying a single clip; used as an image filename
     /// prefix so two clips with the same inferred indices do not overwrite

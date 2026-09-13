@@ -36,3 +36,6 @@ Pods/
 # Claude Code / motes
 .memory/
 .claude/
+
+# Playwright CLI temp artifacts
+.playwright-cli/

@@ -1,0 +1,12 @@
+{
+  "title_contains": "Tankers",
+  "must_contain": [
+    "Saudi Arabia has another Red Sea option"
+  ],
+  "must_not_contain": [
+    "while we verify access"
+  ],
+  "min_body_chars": 4000,
+  "max_total_images": 12,
+  "ocr_must_not_contain": []
+}
