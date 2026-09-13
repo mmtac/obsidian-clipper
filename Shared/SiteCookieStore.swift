@@ -144,8 +144,10 @@ final class KeychainCookieStore: CookieStoring, @unchecked Sendable {
     private let account = "all"
     private let accessGroup: String?
 
-    /// `accessGroup` defaults to the App Group ID, which iOS accepts directly
-    /// as a keychain access group. Pass `nil` for contexts without the
+    /// `accessGroup` defaults to the App Group ID — the app-groups
+    /// entitlement alone authorizes it as a keychain access group on iOS
+    /// (no `keychain-access-groups` entitlement; adding one breaks
+    /// provisioning-profile matching). Pass `nil` for contexts without the
     /// entitlement (unit test runners).
     init(accessGroup: String? = ClipperSettings.suiteName) {
         self.accessGroup = accessGroup
