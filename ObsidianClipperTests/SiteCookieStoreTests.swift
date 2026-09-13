@@ -119,6 +119,39 @@ final class SiteCookieStoreTests: XCTestCase {
         )
     }
 
+    // MARK: - Site input parsing (custom Site Logins entries)
+
+    func testParseBareDomain() throws {
+        let parsed = try XCTUnwrap(SiteCookies.parseSiteInput("washingtonpost.com"))
+        XCTAssertEqual(parsed.domain, "washingtonpost.com")
+        XCTAssertEqual(parsed.loginURL.absoluteString, "https://washingtonpost.com")
+    }
+
+    func testParseHostStripsWWWForDomainButKeepsHostInURL() throws {
+        let parsed = try XCTUnwrap(SiteCookies.parseSiteInput("www.economist.com"))
+        XCTAssertEqual(parsed.domain, "economist.com")
+        XCTAssertEqual(parsed.loginURL.absoluteString, "https://www.economist.com")
+    }
+
+    func testParseFullLoginURLKeepsPath() throws {
+        let parsed = try XCTUnwrap(SiteCookies.parseSiteInput("https://www.washingtonpost.com/subscribe/signin/"))
+        XCTAssertEqual(parsed.domain, "washingtonpost.com")
+        XCTAssertEqual(parsed.loginURL.absoluteString, "https://www.washingtonpost.com/subscribe/signin/")
+    }
+
+    func testParseUppercaseAndWhitespaceNormalized() throws {
+        let parsed = try XCTUnwrap(SiteCookies.parseSiteInput("  Bloomberg.com  "))
+        XCTAssertEqual(parsed.domain, "bloomberg.com")
+    }
+
+    func testParseRejectsGarbage() {
+        XCTAssertNil(SiteCookies.parseSiteInput(""))
+        XCTAssertNil(SiteCookies.parseSiteInput("   "))
+        XCTAssertNil(SiteCookies.parseSiteInput("not a url"))
+        XCTAssertNil(SiteCookies.parseSiteInput("localhost"))
+        XCTAssertNil(SiteCookies.parseSiteInput("ftp://example.com"))
+    }
+
     // MARK: - Serialization round-trip
 
     func testSerializeDeserializeRoundTrip() throws {

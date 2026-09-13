@@ -101,6 +101,33 @@ enum SiteCookies {
         return Array(byKey.values)
     }
 
+    // MARK: - Site input parsing
+
+    /// Parse user input naming a site — a bare domain ("washingtonpost.com"),
+    /// a host ("www.economist.com"), or a full URL (optionally a specific
+    /// login page) — into the domain suffix used for cookie matching plus the
+    /// URL the login sheet should open. Returns nil for input with no
+    /// plausible domain.
+    static func parseSiteInput(_ input: String) -> (domain: String, loginURL: URL)? {
+        var trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return nil }
+        if !trimmed.contains("://") {
+            trimmed = "https://" + trimmed
+        }
+        guard let url = URL(string: trimmed),
+              let host = url.host,
+              host.contains("."),
+              url.scheme == "https" || url.scheme == "http" else {
+            return nil
+        }
+        let domain = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        // Keep a user-supplied login path; otherwise open the site root.
+        let loginURL = url.path.isEmpty || url.path == "/"
+            ? URL(string: "https://\(host)")!
+            : url
+        return (domain, loginURL)
+    }
+
     // MARK: - Serialization
 
     /// Round-trip cookies through a plist-safe representation

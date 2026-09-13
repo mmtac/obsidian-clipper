@@ -4,20 +4,79 @@ import WebKit
 /// A site whose login the clipper can reuse. The share extension attaches the
 /// harvested cookies when it re-fetches a shared URL, so paywalled pages
 /// (NYT etc.) return the full article instead of the anonymous shell.
-struct SitePreset: Identifiable {
+/// Built-in presets cover common paywalls; users add their own sites for
+/// whatever sources they routinely read.
+struct LoginSite: Identifiable, Equatable, Codable {
     /// Registrable domain suffix used for cookie matching.
     let id: String
     let name: String
-    let loginURL: URL
+    let loginURLString: String
+    var isPreset: Bool = false
 
-    static let all: [SitePreset] = [
-        SitePreset(id: "nytimes.com", name: "The New York Times",
-                   loginURL: URL(string: "https://myaccount.nytimes.com/auth/login")!),
-        SitePreset(id: "wired.com", name: "Wired",
-                   loginURL: URL(string: "https://www.wired.com/account/sign-in")!),
-        SitePreset(id: "theverge.com", name: "The Verge",
-                   loginURL: URL(string: "https://www.theverge.com")!),
+    var loginURL: URL { URL(string: loginURLString) ?? URL(string: "https://\(id)")! }
+
+    static let presets: [LoginSite] = [
+        LoginSite(id: "nytimes.com", name: "The New York Times",
+                  loginURLString: "https://myaccount.nytimes.com/auth/login", isPreset: true),
+        LoginSite(id: "wired.com", name: "Wired",
+                  loginURLString: "https://www.wired.com/account/sign-in", isPreset: true),
+        LoginSite(id: "theverge.com", name: "The Verge",
+                  loginURLString: "https://www.theverge.com", isPreset: true),
     ]
+}
+
+/// Persistence for user-added login sites, in the App Group defaults so the
+/// list survives reinstalls alongside the rest of the settings. (The
+/// extension never reads this list — cookie matching is purely by domain —
+/// so it lives here rather than in ClipperSettings.)
+enum CustomLoginSites {
+
+    private static let key = "custom_login_sites"
+
+    private static var defaults: UserDefaults {
+        UserDefaults(suiteName: ClipperSettings.suiteName) ?? .standard
+    }
+
+    static func load() -> [LoginSite] {
+        guard let data = defaults.data(forKey: key),
+              let sites = try? JSONDecoder().decode([LoginSite].self, from: data) else {
+            return []
+        }
+        return sites
+    }
+
+    static func save(_ sites: [LoginSite]) {
+        if let data = try? JSONEncoder().encode(sites) {
+            defaults.set(data, forKey: key)
+        }
+    }
+
+    /// Add a site from raw user input. Returns the stored site, or nil when
+    /// the input has no plausible domain. Duplicates (by domain, including
+    /// presets) return the existing entry instead of adding twice.
+    static func add(input: String, name: String) -> LoginSite? {
+        guard let parsed = SiteCookies.parseSiteInput(input) else { return nil }
+        if let preset = LoginSite.presets.first(where: { $0.id == parsed.domain }) {
+            return preset
+        }
+        var sites = load()
+        if let existing = sites.first(where: { $0.id == parsed.domain }) {
+            return existing
+        }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let site = LoginSite(
+            id: parsed.domain,
+            name: trimmedName.isEmpty ? parsed.domain : trimmedName,
+            loginURLString: parsed.loginURL.absoluteString
+        )
+        sites.append(site)
+        save(sites)
+        return site
+    }
+
+    static func remove(id: String) {
+        save(load().filter { $0.id != id })
+    }
 }
 
 /// Settings screen listing supported sites with login status. Tapping a site
@@ -26,39 +85,61 @@ struct SitePreset: Identifiable {
 /// Keychain where the extension can read them.
 struct SiteLoginView: View {
 
-    @State private var activePreset: SitePreset?
+    @State private var customSites: [LoginSite] = []
+    @State private var activeSite: LoginSite?
+    @State private var showAddSheet = false
     @State private var statuses: [String: (count: Int, earliestExpiry: Date?)] = [:]
 
     private let store = KeychainCookieStore.shared
 
+    private var allSites: [LoginSite] {
+        LoginSite.presets + customSites.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
     var body: some View {
         List {
             Section {
-                ForEach(SitePreset.all) { preset in
-                    row(for: preset)
+                ForEach(allSites) { site in
+                    row(for: site)
                 }
             } footer: {
-                Text("Log in to a site here and the clipper will use that session when it fetches shared links — so paywalled articles clip in full. Sessions are stored in the Keychain and never leave the device.")
+                Text("Log in to a site here and the clipper will use that session when it fetches shared links — so paywalled articles clip in full. Sessions are stored in the Keychain and never leave the device. Add any site you routinely clip from with the + button.")
             }
         }
         .navigationTitle("Site Logins")
-        .sheet(item: $activePreset, onDismiss: refreshStatuses) { preset in
-            SiteLoginSheet(preset: preset) {
-                harvestCookies(for: preset)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showAddSheet = true
+                } label: {
+                    Label("Add Site", systemImage: "plus")
+                }
             }
         }
-        .onAppear(perform: refreshStatuses)
+        .sheet(item: $activeSite, onDismiss: refresh) { site in
+            SiteLoginSheet(site: site) {
+                harvestCookies(for: site)
+            }
+        }
+        .sheet(isPresented: $showAddSheet) {
+            AddSiteSheet { newSite in
+                refresh()
+                // Drop straight into the login sheet for the new site.
+                activeSite = newSite
+            }
+        }
+        .onAppear(perform: refresh)
     }
 
     @ViewBuilder
-    private func row(for preset: SitePreset) -> some View {
-        let status = statuses[preset.id]
+    private func row(for site: LoginSite) -> some View {
+        let status = statuses[site.id]
         Button {
-            activePreset = preset
+            activeSite = site
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(preset.name)
+                    Text(site.name)
                         .foregroundStyle(.primary)
                     Text(statusText(for: status))
                         .font(.caption)
@@ -70,12 +151,22 @@ struct SiteLoginView: View {
             }
         }
         .swipeActions {
-            Button(role: .destructive) {
-                store.removeCookies(domainSuffix: preset.id)
-                refreshStatuses()
-            } label: {
-                Label("Clear", systemImage: "trash")
+            if !site.isPreset {
+                Button(role: .destructive) {
+                    CustomLoginSites.remove(id: site.id)
+                    store.removeCookies(domainSuffix: site.id)
+                    refresh()
+                } label: {
+                    Label("Remove", systemImage: "trash")
+                }
             }
+            Button {
+                store.removeCookies(domainSuffix: site.id)
+                refresh()
+            } label: {
+                Label("Log Out", systemImage: "person.crop.circle.badge.xmark")
+            }
+            .tint(.orange)
         }
     }
 
@@ -89,22 +180,75 @@ struct SiteLoginView: View {
         return "Logged in"
     }
 
-    private func refreshStatuses() {
+    private func refresh() {
+        customSites = CustomLoginSites.load()
         var next: [String: (count: Int, earliestExpiry: Date?)] = [:]
-        for preset in SitePreset.all {
-            next[preset.id] = store.summary(forDomainSuffix: preset.id)
+        for site in LoginSite.presets + customSites {
+            next[site.id] = store.summary(forDomainSuffix: site.id)
         }
         statuses = next
     }
 
-    private func harvestCookies(for preset: SitePreset) {
+    private func harvestCookies(for site: LoginSite) {
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
             let matching = cookies.filter {
-                SiteCookies.domainMatches(cookieDomain: $0.domain, host: "www." + preset.id)
-                    || SiteCookies.hostMatchesSuffix(host: SiteCookies.normalizedDomain($0.domain), suffix: preset.id)
+                SiteCookies.hostMatchesSuffix(host: SiteCookies.normalizedDomain($0.domain), suffix: site.id)
             }
             store.merge(matching)
-            refreshStatuses()
+            refresh()
+        }
+    }
+}
+
+/// Form for adding a custom site: paste a domain, host, or a specific
+/// login-page URL.
+private struct AddSiteSheet: View {
+
+    let onAdded: (LoginSite) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var address = ""
+    @State private var name = ""
+    @State private var showInvalidInput = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("washingtonpost.com", text: $address)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    TextField("Name (optional)", text: $name)
+                } header: {
+                    Text("Site")
+                } footer: {
+                    Text("Enter the site's domain, or paste its sign-in page URL and the login screen will open there directly.")
+                }
+            }
+            .navigationTitle("Add Site")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        if let site = CustomLoginSites.add(input: address, name: name) {
+                            dismiss()
+                            onAdded(site)
+                        } else {
+                            showInvalidInput = true
+                        }
+                    }
+                    .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .alert("Couldn't recognize that address", isPresented: $showInvalidInput) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Enter a domain like example.com, or a full https:// URL.")
+            }
         }
     }
 }
@@ -114,16 +258,16 @@ struct SiteLoginView: View {
 /// Done.
 private struct SiteLoginSheet: View {
 
-    let preset: SitePreset
+    let site: LoginSite
     let onDone: () -> Void
 
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            LoginWebView(url: preset.loginURL)
+            LoginWebView(url: site.loginURL)
                 .ignoresSafeArea(edges: .bottom)
-                .navigationTitle(preset.name)
+                .navigationTitle(site.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
