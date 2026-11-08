@@ -21,12 +21,12 @@ DerivedData/
 .build/
 Packages/
 Package.pins
-Package.resolved
-*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+# Package.resolved is committed so release builds pin exact dependency versions.
 
 # CocoaPods
 Pods/
 *.xcworkspace
+!*.xcodeproj/project.xcworkspace
 
 # macOS
 .DS_Store

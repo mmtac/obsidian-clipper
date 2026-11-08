@@ -4,6 +4,8 @@ An iOS app + Share Extension that clips web pages, text, and images into your [O
 
 > **Status:** v1.0 shipped, v1.1 hardening + extraction-quality work merged (JSON-LD fast path, SwiftSoup parser, OCR relevance filter, in-process harness tests). See [docs/PRD.md](docs/PRD.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture.
 
+> **Not affiliated with Obsidian.** Obsidian Clipper is an independent app and is not affiliated with or endorsed by Obsidian or Dynalist Inc. "Obsidian" is used only to describe compatibility with Obsidian vaults.
+
 ---
 
 ## What it does
@@ -17,6 +19,21 @@ An iOS app + Share Extension that clips web pages, text, and images into your [O
 - **OCR screenshots — when text is the subject.** Apple Vision (`VNRecognizeTextRequest`) extracts text from images and appends it as a blockquote. A coverage threshold drops OCR output when text is incidental (license plates, signage, name placards in a photo) so the OCR section doesn't fill with noise.
 - **Self-contained clips.** Each clip becomes a folder: `<Vault>/<Target>/<Article Title>/` with its own `images/` subfolder — move it in Obsidian and the images go with it.
 - **Privacy-first.** Everything runs on-device. No server, no analytics, no telemetry.
+
+---
+
+## Site Logins
+
+Some publishers (NYT, Wired, The Verge, or any site you add yourself) only serve the full article to signed-in subscribers. When you share a link from an app other than Safari, the extension has to re-fetch the page, and without your session it would get the paywalled version.
+
+**Site Logins** lets you sign in to those sites once, inside the app, using a standard in-app web view and your own subscription credentials:
+
+- The app never sees or stores your password — you type it directly into the publisher's own sign-in page.
+- After sign-in, only the site's session cookies are kept, in the iOS **Keychain on this device** (shared between the app and its Share Extension via the App Group access group; not synced to iCloud).
+- When the extension re-fetches a page, it attaches those cookies **only** to requests for the matching domain, and **only over HTTPS**.
+- Nothing is sent to the developer or any third party. You can log out of a site (deleting its cookies) at any time by swiping its row on the Site Logins screen.
+
+Sharing from Safari doesn't need Site Logins — `Action.js` already captures the page as you see it.
 
 ---
 
@@ -355,6 +372,8 @@ Article body in clean Markdown with inline images...
 ## Documentation
 
 - [docs/PRD.md](docs/PRD.md) — Product requirements, user stories (BDD), success metrics, release history.
+- [docs/privacy.md](docs/privacy.md) — Privacy policy.
+- [docs/support.md](docs/support.md) — User setup and troubleshooting guide.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Pipeline, module responsibilities, concurrency model, memory strategy, security boundaries, key design decisions.
 - [eval/comparison.md](eval/comparison.md) — A/B/C extraction-spike comparison matrix, per-fixture timings, post-merge result.
 - [eval/recommendation.md](eval/recommendation.md) — Decision rationale for the B+C merge and the deferred Spike A.

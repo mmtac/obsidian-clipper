@@ -66,6 +66,8 @@
 		A10000203 /* MockURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000203 /* MockURLProtocol.swift */; };
 		A10000204 /* ContentQualityGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000204 /* ContentQualityGateTests.swift */; };
 		A10000205 /* SiteCookieStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000205 /* SiteCookieStoreTests.swift */; };
+		5C9D3E41369663306EB7EA2C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = C310B1279DA106ECBDDA1801 /* PrivacyInfo.xcprivacy */; };
+		6BF810900D26F9CE1DB6F364 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 3C0F69C3D5F12DA8E007E1C3 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -146,6 +148,8 @@
 		A70000001 /* ObsidianClipper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ObsidianClipper.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A70000002 /* ClipperExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClipperExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A70000003 /* ObsidianClipperTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ObsidianClipperTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C310B1279DA106ECBDDA1801 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		3C0F69C3D5F12DA8E007E1C3 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -171,6 +175,7 @@
 				A20000014 /* DiagnosticsView.swift */,
 				A20000003 /* Assets.xcassets */,
 				A20000040 /* ObsidianClipper.entitlements */,
+				C310B1279DA106ECBDDA1801 /* PrivacyInfo.xcprivacy */,
 			);
 			path = ObsidianClipper;
 			sourceTree = "<group>";
@@ -194,6 +199,7 @@
 				A20000030 /* Info.plist */,
 				A20000041 /* ClipperExtension.entitlements */,
 				A20000060 /* Action.js */,
+				3C0F69C3D5F12DA8E007E1C3 /* PrivacyInfo.xcprivacy */,
 			);
 			path = ClipperExtension;
 			sourceTree = "<group>";
@@ -353,6 +359,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000003 /* Assets.xcassets in Resources */,
+				5C9D3E41369663306EB7EA2C /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -361,6 +368,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000060 /* Action.js in Resources */,
+				6BF810900D26F9CE1DB6F364 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -537,6 +545,7 @@
 				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = Z387TXCHZ9;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Obsidian Clipper";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -561,6 +570,7 @@
 				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = Z387TXCHZ9;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Obsidian Clipper";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
