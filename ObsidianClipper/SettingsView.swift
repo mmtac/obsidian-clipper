@@ -3,11 +3,17 @@ import SwiftUI
 struct SettingsView: View {
 
     @EnvironmentObject private var settings: ClipperSettings
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .subheadline) private var stepBadgeSize: CGFloat = 24
     @State private var showFolderPicker = false
     @State private var resolvedPath: String = "Not set"
     @State private var vaultIsAccessible = false
+    @State private var vaultError: VaultBookmarkError?
+    #if DEBUG
     @State private var lastExtensionLaunch: String = "Never"
     @State private var extensionLaunchCount: Int = 0
+    #endif
 
     private var needsOnboarding: Bool {
         settings.vaultBookmark == nil
@@ -21,10 +27,13 @@ struct SettingsView: View {
                     Section {
                         VStack(spacing: 12) {
                             Image(systemName: "folder.badge.questionmark")
-                                .font(.system(size: 40))
+                                .font(.largeTitle)
+                                .imageScale(.large)
                                 .foregroundStyle(.orange)
+                                .accessibilityHidden(true)
                             Text("Get Started")
                                 .font(.headline)
+                                .accessibilityAddTraits(.isHeader)
                             Text("Select your Obsidian vault folder to start clipping web pages. Tap the button below to choose a folder from iCloud Drive or local storage.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
@@ -44,20 +53,11 @@ struct SettingsView: View {
 
                 // MARK: - Vault Configuration
                 Section {
-                    HStack {
-                        Label("Vault Name", systemImage: "book.closed")
-                        Spacer()
-                        TextField("e.g. omniscient", text: $settings.vaultName)
-                            .multilineTextAlignment(.trailing)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                    }
-
-                    HStack {
+                    adaptiveRow {
                         Label("Target Folder", systemImage: "folder")
-                        Spacer()
+                    } content: {
                         TextField("e.g. Inbox", text: $settings.targetFolder)
-                            .multilineTextAlignment(.trailing)
+                            .multilineTextAlignment(dynamicTypeSize.isAccessibilitySize ? .leading : .trailing)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                     }
@@ -68,19 +68,7 @@ struct SettingsView: View {
                         Label("Select Vault Folder", systemImage: "folder.badge.plus")
                     }
 
-                    HStack {
-                        Text("Vault Location")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Image(systemName: vaultIsAccessible ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundStyle(vaultIsAccessible ? .green : .red)
-                            .imageScale(.small)
-                        Text(resolvedPath)
-                            .foregroundStyle(.secondary)
-                            .font(.caption)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
+                    vaultLocationRow
                 } header: {
                     Text("Vault")
                 } footer: {
@@ -117,6 +105,21 @@ struct SettingsView: View {
                     Text("Log in to paywalled sites so clips capture the full article instead of the preview.")
                 }
 
+                // MARK: - Enable the Extension
+                Section {
+                    VStack(alignment: .leading, spacing: 12) {
+                        step(number: 1, text: "In Safari, tap the Share button")
+                        step(number: 2, text: "Scroll the row of app icons to the end and tap More")
+                        step(number: 3, text: "Tap Edit, then turn on \"Clip to Obsidian\"")
+                        step(number: 4, text: "Tap the + next to it to add it to Favorites so it appears first in the Share sheet")
+                    }
+                    .padding(.vertical, 4)
+                } header: {
+                    Text("Turn On the Share Extension")
+                } footer: {
+                    Text("You only need to do this once.")
+                }
+
                 // MARK: - How to Use
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
@@ -130,20 +133,19 @@ struct SettingsView: View {
                     Text("How to Use")
                 }
 
-                // MARK: - Diagnostics
+                #if DEBUG
+                // MARK: - Diagnostics (developer builds only)
                 Section {
-                    HStack {
+                    adaptiveRow {
                         Label("Last Extension Launch", systemImage: "clock.arrow.circlepath")
-                        Spacer()
+                    } content: {
                         Text(lastExtensionLaunch)
                             .foregroundStyle(.secondary)
                             .font(.caption)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
                     }
-                    HStack {
+                    adaptiveRow {
                         Label("Total Launches", systemImage: "number")
-                        Spacer()
+                    } content: {
                         Text("\(extensionLaunchCount)")
                             .foregroundStyle(.secondary)
                             .font(.caption.monospacedDigit())
@@ -158,6 +160,7 @@ struct SettingsView: View {
                 } footer: {
                     Text("Updated whenever the share extension reaches user code. \"Never\" means the extension has not been launched since the app was installed — useful for confirming Safari can actually start the extension.")
                 }
+                #endif
 
                 // MARK: - About
                 Section {
@@ -169,21 +172,124 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Obsidian Clipper")
+            // The large title truncates at accessibility text sizes.
+            .navigationBarTitleDisplayMode(dynamicTypeSize.isAccessibilitySize ? .inline : .large)
             .sheet(isPresented: $showFolderPicker) {
                 FolderPickerView { url in
-                    settings.saveVaultBookmark(for: url)
+                    do {
+                        try settings.saveVaultBookmark(for: url)
+                    } catch let error as VaultBookmarkError {
+                        vaultError = error
+                    } catch {
+                        vaultError = .bookmarkFailed(underlying: error)
+                    }
                     refreshResolvedPath()
                 }
             }
-            .onAppear {
-                refreshResolvedPath()
-                refreshDiagnostics()
+            .alert(
+                vaultError?.errorDescription ?? "Couldn't use that folder.",
+                isPresented: Binding(
+                    get: { vaultError != nil },
+                    set: { if !$0 { vaultError = nil } }
+                )
+            ) {
+                Button("Choose Again") {
+                    vaultError = nil
+                    showFolderPicker = true
+                }
+                Button("Cancel", role: .cancel) { vaultError = nil }
+            } message: {
+                Text(vaultError?.recoverySuggestion ?? "")
+            }
+            .onAppear(perform: refreshAll)
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { refreshAll() }
             }
         }
     }
 
+    // MARK: - Rows
+
+    private var vaultLocationRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            adaptiveRow {
+                Text("Vault Location")
+                    .foregroundStyle(.secondary)
+            } content: {
+                HStack(spacing: 6) {
+                    Image(systemName: vaultIsAccessible ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundStyle(vaultIsAccessible ? .green : .red)
+                        .imageScale(.small)
+                        .accessibilityLabel(vaultStatusLabel)
+                    Text(resolvedPath)
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                        .truncationMode(.middle)
+                }
+            }
+            if settings.vaultBookmark != nil && !vaultIsAccessible {
+                Text("Folder unavailable — tap Select Vault Folder to choose it again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var vaultStatusLabel: String {
+        if vaultIsAccessible { return "Vault folder accessible" }
+        return settings.vaultBookmark == nil ? "Vault folder not set" : "Vault folder unavailable"
+    }
+
+    /// A label/value row that sits side by side at normal text sizes and
+    /// stacks vertically at accessibility sizes so neither side truncates.
+    @ViewBuilder
+    private func adaptiveRow<L: View, C: View>(
+        @ViewBuilder label: () -> L,
+        @ViewBuilder content: () -> C
+    ) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 6) {
+                label()
+                content()
+            }
+        } else {
+            LabeledContent {
+                content()
+            } label: {
+                label()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func step(number: Int, text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("\(number)")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(minWidth: stepBadgeSize, minHeight: stepBadgeSize)
+                .background(Circle().fill(Color.accentColor))
+            Text(text)
+                .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(number), \(text)")
+    }
+
+    // MARK: - Refresh
+
+    private func refreshAll() {
+        refreshResolvedPath()
+        #if DEBUG
+        refreshDiagnostics()
+        #endif
+    }
+
+    #if DEBUG
     private func refreshDiagnostics() {
-        let defaults = UserDefaults(suiteName: ClipperSettings.suiteName) ?? .standard
+        let defaults = ClipperSettings.sharedDefaults()
         extensionLaunchCount = defaults.integer(forKey: "extension_launch_count")
         if let raw = defaults.string(forKey: "last_extension_launch"),
            let date = ISO8601DateFormatter().date(from: raw) {
@@ -195,10 +301,11 @@ struct SettingsView: View {
             lastExtensionLaunch = "Never"
         }
     }
+    #endif
 
     private func refreshResolvedPath() {
         guard let resolved = settings.resolveVaultURL() else {
-            resolvedPath = "Not set"
+            resolvedPath = settings.vaultBookmark == nil ? "Not set" : "Unavailable"
             vaultIsAccessible = false
             return
         }
@@ -211,19 +318,6 @@ struct SettingsView: View {
         }
         vaultIsAccessible = accessible && exists && !resolved.isStale
         resolvedPath = url.lastPathComponent
-    }
-
-    @ViewBuilder
-    private func step(number: Int, text: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text("\(number)")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(Color.accentColor))
-            Text(text)
-                .font(.subheadline)
-        }
     }
 }
 

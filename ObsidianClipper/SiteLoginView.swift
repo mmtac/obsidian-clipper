@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import os
 
 /// A site whose login the clipper can reuse. The share extension attaches the
 /// harvested cookies when it re-fetches a shared URL, so paywalled pages
@@ -13,7 +14,9 @@ struct LoginSite: Identifiable, Equatable, Codable {
     let loginURLString: String
     var isPreset: Bool = false
 
-    var loginURL: URL { URL(string: loginURLString) ?? URL(string: "https://\(id)")! }
+    /// Where the login sheet opens. Nil only if both the stored URL and the
+    /// bare domain fail to parse, which the sheet reports instead of crashing.
+    var loginURL: URL? { URL(string: loginURLString) ?? URL(string: "https://\(id)") }
 
     static let presets: [LoginSite] = [
         LoginSite(id: "nytimes.com", name: "The New York Times",
@@ -34,7 +37,7 @@ enum CustomLoginSites {
     private static let key = "custom_login_sites"
 
     private static var defaults: UserDefaults {
-        UserDefaults(suiteName: ClipperSettings.suiteName) ?? .standard
+        ClipperSettings.sharedDefaults()
     }
 
     static func load() -> [LoginSite] {
@@ -80,15 +83,35 @@ enum CustomLoginSites {
 }
 
 /// Settings screen listing supported sites with login status. Tapping a site
-/// opens an in-app browser sheet; when the user taps Done, cookies for that
+/// opens an in-app browser sheet; when the sheet closes, cookies for that
 /// site are harvested from the WebView's cookie store into the shared
 /// Keychain where the extension can read them.
 struct SiteLoginView: View {
+
+    /// A destructive action awaiting confirmation.
+    private enum PendingAction: Identifiable {
+        case logOut(LoginSite)
+        case remove(LoginSite)
+
+        var id: String {
+            switch self {
+            case .logOut(let site): return "logout-\(site.id)"
+            case .remove(let site): return "remove-\(site.id)"
+            }
+        }
+
+        var site: LoginSite {
+            switch self {
+            case .logOut(let site), .remove(let site): return site
+            }
+        }
+    }
 
     @State private var customSites: [LoginSite] = []
     @State private var activeSite: LoginSite?
     @State private var showAddSheet = false
     @State private var statuses: [String: (count: Int, earliestExpiry: Date?)] = [:]
+    @State private var pendingAction: PendingAction?
 
     private let store = KeychainCookieStore.shared
 
@@ -103,7 +126,10 @@ struct SiteLoginView: View {
                     row(for: site)
                 }
             } footer: {
-                Text("Log in to a site here and the clipper will use that session when it fetches shared links — so paywalled articles clip in full. Sessions are stored in the Keychain and never leave the device. Add any site you routinely clip from with the + button.")
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Log in to a site here and the clipper will use that session when it fetches shared links — so paywalled articles clip in full. Sessions are stored in the Keychain and never leave the device. Add any site you routinely clip from with the + button. Swipe left on a site to log out.")
+                    Text("Sign in with Google or Apple may not work in this browser — use the site's email and password sign-in.")
+                }
             }
         }
         .navigationTitle("Site Logins")
@@ -128,12 +154,45 @@ struct SiteLoginView: View {
                 activeSite = newSite
             }
         }
+        .confirmationDialog(
+            confirmationTitle,
+            isPresented: Binding(
+                get: { pendingAction != nil },
+                set: { if !$0 { pendingAction = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingAction
+        ) { action in
+            switch action {
+            case .logOut(let site):
+                Button("Log Out", role: .destructive) { logOut(site) }
+            case .remove(let site):
+                Button("Remove Site", role: .destructive) { remove(site) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { action in
+            switch action {
+            case .logOut(let site):
+                Text("The saved session for \(site.name) will be deleted. Clips from this site will no longer include content that requires a login.")
+            case .remove(let site):
+                Text("\(site.name) and its saved session will be removed from the clipper.")
+            }
+        }
         .onAppear(perform: refresh)
+    }
+
+    private var confirmationTitle: String {
+        switch pendingAction {
+        case .logOut(let site): return "Log out of \(site.name)?"
+        case .remove(let site): return "Remove \(site.name)?"
+        case nil: return ""
+        }
     }
 
     @ViewBuilder
     private func row(for site: LoginSite) -> some View {
         let status = statuses[site.id]
+        let loggedIn = (status?.count ?? 0) > 0
         Button {
             activeSite = site
         } label: {
@@ -146,23 +205,22 @@ struct SiteLoginView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Image(systemName: (status?.count ?? 0) > 0 ? "checkmark.circle.fill" : "person.crop.circle.badge.questionmark")
-                    .foregroundStyle((status?.count ?? 0) > 0 ? .green : .secondary)
+                Image(systemName: loggedIn ? "checkmark.circle.fill" : "person.crop.circle.badge.questionmark")
+                    .foregroundStyle(loggedIn ? .green : .secondary)
+                    .accessibilityLabel(loggedIn ? "Logged in" : "Not logged in")
             }
         }
+        .accessibilityHint("Opens the sign-in page")
         .swipeActions {
             if !site.isPreset {
                 Button(role: .destructive) {
-                    CustomLoginSites.remove(id: site.id)
-                    store.removeCookies(domainSuffix: site.id)
-                    refresh()
+                    pendingAction = .remove(site)
                 } label: {
                     Label("Remove", systemImage: "trash")
                 }
             }
             Button {
-                store.removeCookies(domainSuffix: site.id)
-                refresh()
+                pendingAction = .logOut(site)
             } label: {
                 Label("Log Out", systemImage: "person.crop.circle.badge.xmark")
             }
@@ -188,6 +246,44 @@ struct SiteLoginView: View {
         }
         statuses = next
     }
+
+    private func logOut(_ site: LoginSite) {
+        store.removeCookies(domainSuffix: site.id)
+        refresh()
+        Task { await clearWebSession(for: site) }
+    }
+
+    private func remove(_ site: LoginSite) {
+        CustomLoginSites.remove(id: site.id)
+        logOut(site)
+    }
+
+    /// Delete the site's session from the in-app browser too. Without this the
+    /// persistent WKWebsiteDataStore still holds the login, and reopening the
+    /// sheet would silently re-harvest it into the Keychain.
+    @MainActor
+    private func clearWebSession(for site: LoginSite) async {
+        let dataStore = WKWebsiteDataStore.default()
+        let cookieStore = dataStore.httpCookieStore
+        for cookie in await cookieStore.allCookies()
+        where SiteCookies.hostMatchesSuffix(host: SiteCookies.normalizedDomain(cookie.domain), suffix: site.id) {
+            await cookieStore.deleteCookie(cookie)
+        }
+        // Data records are keyed by registrable domain ("nytimes.com"), so
+        // match in both directions to cover sites stored by subdomain.
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        let records = await dataStore.dataRecords(ofTypes: types).filter { record in
+            let name = record.displayName.lowercased()
+            return SiteCookies.hostMatchesSuffix(host: name, suffix: site.id)
+                || SiteCookies.hostMatchesSuffix(host: site.id, suffix: name)
+        }
+        if !records.isEmpty {
+            await dataStore.removeData(ofTypes: types, for: records)
+        }
+        Self.logger.info("Cleared web session for site; cookies and \(records.count) data records removed")
+    }
+
+    private static let logger = Logger(subsystem: "com.obsidian.clipper", category: "site-login")
 
     private func harvestCookies(for site: LoginSite) {
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
@@ -254,43 +350,193 @@ private struct AddSiteSheet: View {
 }
 
 /// In-app login browser. Uses the default (persistent) WKWebsiteDataStore so
-/// cookies survive into the harvest step; harvest happens when the user taps
-/// Done.
+/// cookies survive into the harvest step; harvest happens once, when the
+/// sheet goes away (Done or swipe-to-dismiss).
 private struct SiteLoginSheet: View {
 
     let site: LoginSite
-    let onDone: () -> Void
+    let onFinish: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var browser = LoginBrowser()
 
     var body: some View {
         NavigationStack {
-            LoginWebView(url: site.loginURL)
+            content
                 .ignoresSafeArea(edges: .bottom)
                 .navigationTitle(site.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        titleView
+                    }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") {
-                            onDone()
-                            dismiss()
+                        Button("Done") { dismiss() }
+                    }
+                    ToolbarItem(placement: .topBarLeading) {
+                        if browser.isLoading {
+                            ProgressView()
+                                .accessibilityLabel("Loading")
                         }
+                    }
+                    ToolbarItemGroup(placement: .bottomBar) {
+                        Button {
+                            browser.goBack()
+                        } label: {
+                            Label("Back", systemImage: "chevron.backward")
+                        }
+                        .disabled(!browser.canGoBack)
+                        Spacer()
+                        Button {
+                            browser.reload()
+                        } label: {
+                            Label("Reload", systemImage: "arrow.clockwise")
+                        }
+                        .disabled(site.loginURL == nil)
                     }
                 }
         }
-        .interactiveDismissDisabled(false)
-        .onDisappear(perform: onDone)
+        .onDisappear(perform: onFinish)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let url = site.loginURL {
+            ZStack {
+                LoginWebView(url: url, browser: browser)
+                if let error = browser.loadError {
+                    ContentUnavailableView {
+                        Label("Couldn't Load Page", systemImage: "wifi.exclamationmark")
+                    } description: {
+                        Text(error)
+                    } actions: {
+                        Button("Retry") { browser.reload() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .background(Color(uiColor: .systemBackground))
+                }
+            }
+        } else {
+            ContentUnavailableView(
+                "Invalid Address",
+                systemImage: "exclamationmark.triangle",
+                description: Text("This site's sign-in address couldn't be read. Remove the site and add it again.")
+            )
+        }
+    }
+
+    private var titleView: some View {
+        VStack(spacing: 0) {
+            Text(site.name)
+                .font(.headline)
+                .lineLimit(1)
+            if let host = browser.host {
+                HStack(spacing: 3) {
+                    if browser.isSecure {
+                        Image(systemName: "lock.fill")
+                            .imageScale(.small)
+                            .accessibilityLabel("Secure connection")
+                    }
+                    Text(host)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Navigation state for the login browser, doubling as the web view's
+/// navigation delegate.
+@Observable
+@MainActor
+private final class LoginBrowser: NSObject, WKNavigationDelegate {
+
+    var isLoading = false
+    var canGoBack = false
+    var host: String?
+    var isSecure = false
+    var loadError: String?
+
+    @ObservationIgnored weak var webView: WKWebView?
+    @ObservationIgnored var initialURL: URL?
+    @ObservationIgnored private var failedURL: URL?
+
+    func goBack() {
+        loadError = nil
+        webView?.goBack()
+    }
+
+    /// Reload the current page, or retry the URL that failed to load.
+    func reload() {
+        guard let webView else { return }
+        loadError = nil
+        if let target = failedURL ?? (webView.url == nil ? initialURL : nil) {
+            failedURL = nil
+            webView.load(URLRequest(url: target))
+        } else {
+            webView.reload()
+        }
+    }
+
+    private func sync(_ webView: WKWebView) {
+        canGoBack = webView.canGoBack
+        if let url = webView.url {
+            host = url.host
+            isSecure = url.scheme?.lowercased() == "https"
+        }
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        isLoading = true
+        loadError = nil
+        failedURL = nil
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        sync(webView)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        isLoading = false
+        sync(webView)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        handle(error, in: webView)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        handle(error, in: webView)
+    }
+
+    private func handle(_ error: Error, in webView: WKWebView) {
+        isLoading = false
+        sync(webView)
+        let nsError = error as NSError
+        // A redirect or a new tap supersedes the load; not a real failure.
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return }
+        failedURL = nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL
+        loadError = nsError.localizedDescription
     }
 }
 
 private struct LoginWebView: UIViewRepresentable {
 
     let url: URL
+    let browser: LoginBrowser
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.allowsBackForwardNavigationGestures = true
+        webView.navigationDelegate = browser
+        browser.webView = webView
+        browser.initialURL = url
         webView.load(URLRequest(url: url))
         return webView
     }
