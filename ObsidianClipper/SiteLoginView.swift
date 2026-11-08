@@ -283,7 +283,7 @@ struct SiteLoginView: View {
         Self.logger.info("Cleared web session for site; cookies and \(records.count) data records removed")
     }
 
-    private static let logger = Logger(subsystem: "com.obsidian.clipper", category: "site-login")
+    private static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "site-login")
 
     private func harvestCookies(for site: LoginSite) {
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in

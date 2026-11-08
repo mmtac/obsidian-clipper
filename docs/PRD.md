@@ -1,4 +1,4 @@
-# Obsidian Clipper — Product Requirements Document
+# Markdown Clipper — Product Requirements Document
 
 **Version:** 1.0 (shipped) · 1.1 hardening in progress
 **Last updated:** 2026-04-16
@@ -8,7 +8,7 @@
 
 ## 1. Executive summary
 
-Obsidian Clipper is an iOS app that saves web pages, shared text, and images into an [Obsidian](https://obsidian.md) vault as clean Markdown notes. It ships with a system Share Extension that accepts content from Safari and any other app with a Share button, then produces a self-contained per-article folder containing the Markdown note and any extracted images.
+Markdown Clipper is an iOS app that saves web pages, shared text, and images into an [Obsidian](https://obsidian.md) vault as clean Markdown notes. It ships with a system Share Extension that accepts content from Safari and any other app with a Share button, then produces a self-contained per-article folder containing the Markdown note and any extracted images.
 
 The app writes `.md` files directly into the user's vault folder via iCloud Drive or local Files storage — **no Obsidian plugin, server, or account is required**.
 
@@ -25,7 +25,7 @@ Obsidian users who read on iPhone and iPad have no first-party way to capture we
 | Third-party clippers that require a server | Privacy concern, extra cost, offline-unfriendly |
 | Read-later apps (Pocket, Readwise) | Content lives outside the vault; still needs export |
 
-A user reading an article behind a login wall on their phone should be able to tap **Share → Clip to Obsidian** and end up with a clean, linked, searchable Markdown note in their vault — within seconds, with no network hop to a third-party service.
+A user reading an article behind a login wall on their phone should be able to tap **Share → MD Clipper** and end up with a clean, linked, searchable Markdown note in their vault — within seconds, with no network hop to a third-party service.
 
 ---
 
@@ -195,7 +195,7 @@ Per the motes-tracked v1.1 epic, landed on `main` at time of writing:
 Scenario: Clip an article from Safari
   Given the vault is configured and accessible
   And I am reading an article in Safari
-  When I tap Share and select "Clip to Obsidian"
+  When I tap Share and select "MD Clipper"
   Then a note titled "<article title>" is saved to Vault/Inbox/<article title>/
   And the note contains the article body as Markdown
   And images appear inline at their original positions
@@ -203,7 +203,7 @@ Scenario: Clip an article from Safari
 
 Scenario: Clip an article behind a login wall
   Given I am logged into a paywalled site in Safari
-  When I tap Share → Clip to Obsidian
+  When I tap Share → MD Clipper
   Then the saved Markdown contains the authenticated content I could see
   And no second fetch to the origin is made
 
@@ -218,12 +218,12 @@ Scenario: Re-clip an article with the same title
 
 **In order to** save something I received in a message or social feed
 **As a** vault-first reader
-**I want** Clip to Obsidian to handle URLs shared as plain text
+**I want** MD Clipper to handle URLs shared as plain text
 
 ```gherkin
 Scenario: URL shared as plain text
   Given I have a message containing "Check this out: https://example.com/post"
-  When I tap Share → Clip to Obsidian on that message
+  When I tap Share → MD Clipper on that message
   Then the extension detects the URL
   And fetches the page
   And saves a Markdown note for that page
@@ -238,7 +238,7 @@ Scenario: URL shared as plain text
 ```gherkin
 Scenario: Share a screenshot from Photos
   Given a screenshot containing readable text
-  When I tap Share → Clip to Obsidian in Photos
+  When I tap Share → MD Clipper in Photos
   Then the image is saved under Vault/Inbox/Clipped Image — <date>/images/
   And the recognized text appears as a blockquote in the note
 ```
@@ -289,7 +289,7 @@ Scenario: Cancel during image download
 ```gherkin
 Scenario: No vault configured
   Given I have never picked a vault folder
-  When I open the Obsidian Clipper app
+  When I open the Markdown Clipper app
   Then an orange onboarding banner is shown
   And tapping "Select Vault Folder" opens the document picker
   And after picking a folder, the banner is replaced with the normal settings
@@ -317,7 +317,7 @@ Scenario: No vault configured
 - **iOS 17.0+.** Uses the Observation framework (`@Observable`), new SwiftUI APIs, and modern Vision APIs.
 - **Xcode 15.4+.**
 - **Share Extension memory cap** (~120 MB resident). Dictates the streaming-to-disk image pipeline, the 20-image clip limit, and Vision downscaling.
-- **App Group** (`group.com.obsidian.clipper`) required for settings to flow between main app and extension.
+- **App Group** (`group.com.mmtac.md-clipper`) required for settings to flow between main app and extension.
 - **NSAllowsArbitraryLoads = true** in the extension's `Info.plist`, because users legitimately clip from HTTP sites behind corporate VPNs and the extension is a user-initiated fetcher, not a background network component.
 - **Vault must be picked via UIDocumentPickerViewController.** iOS does not grant sandboxed apps arbitrary file-system access; the user's folder choice is the only way in.
 
@@ -325,7 +325,7 @@ Scenario: No vault configured
 
 ## 9. Success metrics
 
-Because Obsidian Clipper is a no-telemetry app, success metrics are observed indirectly:
+Because Markdown Clipper is a no-telemetry app, success metrics are observed indirectly:
 
 - **Crash-free clips.** Zero reports of the extension being terminated by the OOM killer on articles that are not pathologically large.
 - **Article-body accuracy.** The Readability output captures the full article body on a curated regression set (Wired, Slate, Electrek, NYTimes-style layouts, GitHub READMEs, MDN pages, Substack posts, Markdown-rendered blogs). Tracked by `ReadabilityExtractorTests`.

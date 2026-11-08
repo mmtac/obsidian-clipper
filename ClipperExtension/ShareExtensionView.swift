@@ -62,7 +62,7 @@ struct ShareExtensionView: View {
                 }
             }
             .padding()
-            .navigationTitle("Clip to Obsidian")
+            .navigationTitle("MD Clipper")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

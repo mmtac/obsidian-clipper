@@ -39,7 +39,7 @@ enum WebContentExtractor {
     /// `ImageProcessor` only keeps the first 10 anyway.
     static let maxSharedImages = 10
 
-    private static let log = Logger(subsystem: "com.obsidian.clipper", category: "fetch")
+    private static let log = Logger(subsystem: "com.mmtac.md-clipper", category: "fetch")
 
     struct RawContent {
         let title: String

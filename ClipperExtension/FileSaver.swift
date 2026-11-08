@@ -5,7 +5,7 @@ import os
 /// using security-scoped bookmarks for file access.
 enum FileSaver {
 
-    private static let logger = Logger(subsystem: "com.obsidian.clipper", category: "save")
+    private static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "save")
 
     /// Maximum UTF-8 byte length of a sanitized title. APFS/HFS+ cap a single
     /// path component at 255 *bytes* (not characters — a CJK character is 3
@@ -43,11 +43,11 @@ enum FileSaver {
         var errorDescription: String? {
             switch self {
             case .noVaultConfigured:
-                return "No vault folder configured. Open Obsidian Clipper and select your vault folder."
+                return "No vault folder configured. Open Markdown Clipper and select your vault folder."
             case .bookmarkResolutionFailed:
                 return "Could not access the vault folder. Please re-select it in settings."
             case .accessDenied:
-                return "Permission denied. Please re-select the vault folder in Obsidian Clipper settings."
+                return "Permission denied. Please re-select the vault folder in Markdown Clipper settings."
             case .writeFailed(let detail):
                 return "Failed to write files: \(detail)"
             }

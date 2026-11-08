@@ -24,7 +24,7 @@ enum ClipError: LocalizedError {
         case .cancelled:
             return "Clipping was cancelled."
         case .paywalled:
-            return "This looks like a paywall or login wall — only a preview was captured. Log in under Settings → Site Logins in the Obsidian Clipper app, or open the page in Safari and share from there."
+            return "This looks like a paywall or login wall — only a preview was captured. Log in under Settings → Site Logins in the Markdown Clipper app, or open the page in Safari and share from there."
         case .thinContent:
             return "Couldn't extract meaningful content from this page. Try opening it in Safari and sharing from there."
         }
@@ -56,7 +56,7 @@ enum ClipError: LocalizedError {
 @MainActor
 enum ClippingPipeline {
 
-    private nonisolated static let logger = Logger(subsystem: "com.obsidian.clipper", category: "pipeline")
+    private nonisolated static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "pipeline")
 
     /// Cap on HTML handed to marker injection / Readability / conversion.
     /// Bounds every parse path regardless of the share source.
@@ -84,7 +84,7 @@ enum ClippingPipeline {
             }
             thread.stackSize = workerStackSize
             thread.qualityOfService = .userInitiated
-            thread.name = "com.obsidian.clipper.pipeline"
+            thread.name = "com.mmtac.md-clipper.pipeline"
             thread.start()
         }
         try Task.checkCancellation()

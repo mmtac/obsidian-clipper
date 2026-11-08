@@ -4,7 +4,7 @@
 <dict>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.obsidian.clipper</string>
+		<string>group.com.mmtac.md-clipper</string>
 	</array>
 </dict>
 </plist>

@@ -6,7 +6,7 @@ import Vision
 /// Downloads images from URLs and performs OCR using Apple's Vision framework.
 actor ImageProcessor {
 
-    private static let logger = Logger(subsystem: "com.obsidian.clipper", category: "image")
+    private static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "image")
 
     /// Concurrent in-flight downloads+OCR. Share extensions have a ~50MB RAM
     /// budget and Vision `.accurate` allocates 2–5MB per image; keep this low.

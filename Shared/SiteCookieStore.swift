@@ -180,10 +180,10 @@ final class KeychainCookieStore: CookieStoring, @unchecked Sendable {
 
     static let shared = KeychainCookieStore()
 
-    private let service = "com.obsidian.clipper.site-cookies"
+    private let service = "com.mmtac.md-clipper.site-cookies"
     private let account = "all"
     private let accessGroup: String?
-    private let log = Logger(subsystem: "com.obsidian.clipper", category: "cookies")
+    private let log = Logger(subsystem: "com.mmtac.md-clipper", category: "cookies")
     private let migrationLock = NSLock()
     private var didMigrateAccessibility = false
 

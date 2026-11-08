@@ -10,7 +10,7 @@ enum HTMLToMarkdown {
     /// in the share extension's constrained environment.
     static let maxHTMLSize = 2 * 1024 * 1024 // 2 MB
 
-    private static let logger = Logger(subsystem: "com.obsidian.clipper", category: "markdown")
+    private static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "markdown")
 
     /// Truncate `s` to at most `maxBytes` UTF-8 bytes, cutting on a valid
     /// UTF-8 scalar boundary. Never returns more than `maxBytes` bytes and

@@ -1,10 +1,10 @@
-# Privacy Policy — Obsidian Clipper
+# Privacy Policy — Markdown Clipper for Obsidian
 
 **Effective date:** 2026-11-08
 
-Obsidian Clipper ("the app") is an iOS app and Share Extension that saves web pages you choose into a folder on your device (typically your Obsidian vault) as Markdown files. This policy explains, in plain language, what the app does and does not do with your information.
+Markdown Clipper ("the app") is an iOS app and Share Extension that saves web pages you choose into a folder on your device (typically your Obsidian vault) as Markdown files. This policy explains, in plain language, what the app does and does not do with your information.
 
-Obsidian Clipper is an independent app and is not affiliated with or endorsed by Obsidian or Dynalist Inc.
+Markdown Clipper for Obsidian is an independent app and is not affiliated with or endorsed by Obsidian or Dynalist Inc.
 
 ## The short version
 

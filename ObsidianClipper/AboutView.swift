@@ -26,7 +26,7 @@ struct AboutView: View {
                         .font(.system(size: 48))
                         .foregroundStyle(Color.accentColor)
                         .accessibilityHidden(true)
-                    Text("Obsidian Clipper")
+                    Text("Markdown Clipper")
                         .font(.title2.bold())
                     Text(versionString)
                         .foregroundStyle(.secondary)
@@ -75,7 +75,7 @@ struct AboutView: View {
             }
 
             Section {
-                Text("Obsidian Clipper is an independent app and is not affiliated with or endorsed by Obsidian or Dynalist Inc.")
+                Text("Markdown Clipper for Obsidian is an independent app and is not affiliated with or endorsed by Obsidian or Dynalist Inc.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

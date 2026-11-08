@@ -110,7 +110,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         step(number: 1, text: "In Safari, tap the Share button")
                         step(number: 2, text: "Scroll the row of app icons to the end and tap More")
-                        step(number: 3, text: "Tap Edit, then turn on \"Clip to Obsidian\"")
+                        step(number: 3, text: "Tap Edit, then turn on \"MD Clipper\"")
                         step(number: 4, text: "Tap the + next to it to add it to Favorites so it appears first in the Share sheet")
                     }
                     .padding(.vertical, 4)
@@ -125,7 +125,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         step(number: 1, text: "Open any webpage in Safari (or any app with Share)")
                         step(number: 2, text: "Tap the Share button")
-                        step(number: 3, text: "Select \"Clip to Obsidian\"")
+                        step(number: 3, text: "Select \"MD Clipper\"")
                         step(number: 4, text: "The article is converted to Markdown and saved to your vault")
                     }
                     .padding(.vertical, 4)
@@ -171,7 +171,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            .navigationTitle("Obsidian Clipper")
+            .navigationTitle("Markdown Clipper")
             // The large title truncates at accessibility text sizes.
             .navigationBarTitleDisplayMode(dynamicTypeSize.isAccessibilitySize ? .inline : .large)
             .sheet(isPresented: $showFolderPicker) {

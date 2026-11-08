@@ -36,9 +36,9 @@ enum VaultBookmarkError: LocalizedError {
 @MainActor
 final class ClipperSettings: ObservableObject {
 
-    nonisolated static let suiteName = "group.com.obsidian.clipper"
+    nonisolated static let suiteName = "group.com.mmtac.md-clipper"
 
-    nonisolated static let logger = Logger(subsystem: "com.obsidian.clipper", category: "settings")
+    nonisolated static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "settings")
 
     /// The App Group defaults shared with the extension. Falls back to
     /// `.standard` so the app still runs, but logs an error: a missing App

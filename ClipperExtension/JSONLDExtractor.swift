@@ -16,7 +16,7 @@ import os
 /// Callers should fall through to Readability when nil is returned.
 enum JSONLDExtractor {
 
-    private static let logger = Logger(subsystem: "com.obsidian.clipper", category: "jsonld")
+    private static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "jsonld")
 
     struct Result: Sendable {
         let title: String

@@ -45,7 +45,7 @@ struct ClipRecord: Codable, Identifiable, Sendable {
 
 enum ClipDiagnostics {
 
-    static let logger = Logger(subsystem: "com.obsidian.clipper", category: "pipeline")
+    static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "pipeline")
 
     /// Number of records kept in the ring buffer.
     private static let capacity = 20
