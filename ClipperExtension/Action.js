@@ -13,8 +13,9 @@ Action.prototype = {
 
     // Serialized payloads above this trigger the reduced-document fallback.
     TRIM_THRESHOLD: 2 * 1024 * 1024,
-    // Hard cap; item providers reliably deliver payloads of this size.
-    MAX_CHARS: 4 * 1024 * 1024,
+    // Hard cap (~1.5M UTF-16 chars, ~3 MB). Keeps the payload well inside what
+    // item providers deliver and what the extension can hold in memory.
+    MAX_CHARS: 1500000,
 
     run: function(args) {
         var self = this;
@@ -23,7 +24,12 @@ Action.prototype = {
             try {
                 html = self.captureHTML();
             } catch (e) {
-                try { html = document.documentElement.outerHTML; } catch (e2) {}
+                try {
+                    html = document.documentElement.outerHTML;
+                    if (html.length > self.MAX_CHARS) {
+                        html = html.substring(0, self.MAX_CHARS);
+                    }
+                } catch (e2) {}
             }
             args.completionFunction({
                 "title": document.title,

@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import os
 
 /// Extracts web page content from Share Extension input items.
 /// Handles URLs, HTML text, plain text, and images shared from Safari and other apps.
@@ -29,6 +30,17 @@ enum WebContentExtractor {
     /// fragment. Tests set 0 to pass small inline fixtures through.
     static var minimumLiveHTMLBytes = 1024
 
+    /// Re-fetched page bodies are truncated (not failed) at this many bytes
+    /// so a huge or never-ending response can't exhaust the extension's
+    /// ~120 MB memory budget.
+    static let maxResponseBytes = 5 * 1024 * 1024
+
+    /// Directly shared images beyond this count are never loaded —
+    /// `ImageProcessor` only keeps the first 10 anyway.
+    static let maxSharedImages = 10
+
+    private static let log = Logger(subsystem: "com.obsidian.clipper", category: "fetch")
+
     struct RawContent {
         let title: String
         let url: URL?
@@ -54,6 +66,8 @@ enum WebContentExtractor {
         case badStatus(Int)
         case network(String)
         case undecodable
+        /// The server answered with a non-HTML MIME type (PDF, image, ...).
+        case notHTML(String)
 
         var errorDescription: String? {
             switch self {
@@ -63,6 +77,8 @@ enum WebContentExtractor {
                 return "The network request failed: \(detail)"
             case .undecodable:
                 return "The page content could not be decoded as text."
+            case .notHTML:
+                return "This link isn't a web page (it's a PDF or other file). Open it in Safari and share from there."
             }
         }
     }
@@ -143,8 +159,11 @@ enum WebContentExtractor {
                     }
                 }
 
-                // 5. Try to get images shared directly (Photos, Screenshots, etc.)
-                if provider.hasItemConformingToTypeIdentifier("public.image") {
+                // 5. Try to get images shared directly (Photos, Screenshots, etc.).
+                //    Stop loading once the cap is reached — each one is a full
+                //    photo held in memory.
+                if sharedImages.count < maxSharedImages,
+                   provider.hasItemConformingToTypeIdentifier("public.image") {
                     if let imageData = await loadImageData(from: provider) {
                         sharedImages.append(imageData)
                     }
@@ -167,8 +186,7 @@ enum WebContentExtractor {
         // have a URL to re-fetch — a truncated Action.js payload otherwise
         // produces a title-only note with no error.
         if let liveHTML = html, url != nil, liveHTML.utf8.count < minimumLiveHTMLBytes {
-            NSLog("[Clipper.extract] live html too small (%d bytes, source=%@); discarding for re-fetch",
-                  liveHTML.utf8.count, htmlSource.rawValue as NSString)
+            log.notice("live html too small (\(liveHTML.utf8.count) bytes, source=\(htmlSource.rawValue, privacy: .public)); discarding for re-fetch")
             html = nil
             htmlSource = .none
         }
@@ -180,16 +198,12 @@ enum WebContentExtractor {
                 let fetched = try await fetchHTML(from: pageURL)
                 html = fetched.html
                 htmlSource = fetched.authenticated ? .refetchAuthenticated : .refetchAnonymous
-                NSLog("[Clipper.extract] re-fetched %@ (%@, %d chars)",
-                      pageURL.absoluteString as NSString,
-                      htmlSource.rawValue as NSString,
-                      fetched.html.count)
+                log.notice("re-fetched \(pageURL.absoluteString, privacy: .private) (\(htmlSource.rawValue, privacy: .public), \(fetched.html.count) chars)")
             } catch is CancellationError {
                 return nil
             } catch {
                 fetchErrorDescription = error.localizedDescription
-                NSLog("[Clipper.extract] fetchHTML FAILED for %@: %@",
-                      pageURL.absoluteString as NSString, error.localizedDescription as NSString)
+                log.error("fetchHTML FAILED for \(pageURL.absoluteString, privacy: .private): \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -257,19 +271,23 @@ enum WebContentExtractor {
         return nil
     }
 
-    /// Load image data from an NSItemProvider. Handles UIImage, Data, and URL payloads.
+    /// Load image data from an NSItemProvider. Prefers the provider's own
+    /// encoded bytes (Data or a local file URL); a bare UIImage is re-encoded
+    /// as JPEG, which is far smaller than PNG for photos.
     private static func loadImageData(from provider: NSItemProvider) async -> Data? {
-        // Try loading as Data first
-        if let data = try? await provider.loadItem(forTypeIdentifier: "public.image") {
-            if let imageData = data as? Data {
-                return imageData
-            }
-            if let image = data as? UIImage, let pngData = image.pngData() {
-                return pngData
-            }
-            if let imageURL = data as? URL, let imageData = try? Data(contentsOf: imageURL) {
-                return imageData
-            }
+        guard let item = try? await provider.loadItem(forTypeIdentifier: "public.image") else {
+            return nil
+        }
+        if let imageData = item as? Data {
+            return imageData
+        }
+        // Only local files: Data(contentsOf:) on a remote URL would block on
+        // the network synchronously.
+        if let imageURL = item as? URL, imageURL.isFileURL {
+            return try? Data(contentsOf: imageURL, options: .mappedIfSafe)
+        }
+        if let image = item as? UIImage {
+            return image.jpegData(compressionQuality: 0.9)
         }
         return nil
     }
@@ -278,8 +296,9 @@ enum WebContentExtractor {
     /// Rejects non-HTTP(S) schemes (file://, javascript:, ftp://, data:, etc.).
     /// Transient failures (timeout, connection reset, 5xx, 429) are retried up to
     /// `maxFetchRetries` times with jittered exponential backoff; permanent
-    /// failures (other 4xx) throw immediately.
-    private static func fetchHTML(from url: URL) async throws -> (html: String, authenticated: Bool) {
+    /// failures (other 4xx, non-HTML MIME type) throw immediately. Bodies are
+    /// streamed and truncated at `maxResponseBytes`.
+    static func fetchHTML(from url: URL) async throws -> (html: String, authenticated: Bool) {
         guard isAllowedScheme(url) else {
             throw FetchError.network("Unsupported URL scheme.")
         }
@@ -299,12 +318,12 @@ enum WebContentExtractor {
         // pages (NYT etc.) serve the full article. Cookie handling is manual
         // here: the extension's own cookie jar must not overwrite the stored
         // session, and Set-Cookie refreshes are merged back explicitly below.
+        // URLSession carries custom headers across redirects, so the redirect
+        // delegate re-derives the Cookie header for every hop.
         let storedCookies = cookieStore.cookies(for: url)
-        let authenticated = !storedCookies.isEmpty
-        if authenticated {
+        if !storedCookies.isEmpty {
             request.httpShouldHandleCookies = false
-            let fields = HTTPCookie.requestHeaderFields(with: storedCookies)
-            if let cookieHeader = fields["Cookie"] {
+            if let cookieHeader = HTTPCookie.requestHeaderFields(with: storedCookies)["Cookie"] {
                 request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
             }
         }
@@ -320,43 +339,82 @@ enum WebContentExtractor {
             }
             try Task.checkCancellation()
 
-            let data: Data
+            let redirectDelegate = CookieRedirectDelegate(cookieStore: cookieStore)
+            let bytes: URLSession.AsyncBytes
             let response: URLResponse
             do {
-                (data, response) = try await (sessionOverride ?? session).data(for: request)
+                (bytes, response) = try await (sessionOverride ?? session).bytes(for: request, delegate: redirectDelegate)
             } catch {
-                if (error as? URLError)?.code == .cancelled {
+                if (error as? URLError)?.code == .cancelled || error is CancellationError {
                     throw CancellationError()
                 }
                 lastError = .network(error.localizedDescription)
-                NSLog("[Clipper.fetch] attempt %d/%d failed: %@",
-                      attempt + 1, maxFetchRetries + 1, error.localizedDescription as NSString)
+                log.error("attempt \(attempt + 1)/\(maxFetchRetries + 1) failed: \(error.localizedDescription, privacy: .public)")
                 continue
             }
 
             guard let httpResponse = response as? HTTPURLResponse else {
+                bytes.task.cancel()
                 lastError = .network("Invalid response from server.")
                 continue
             }
             guard (200...299).contains(httpResponse.statusCode) else {
+                bytes.task.cancel()
                 lastError = .badStatus(httpResponse.statusCode)
-                NSLog("[Clipper.fetch] attempt %d/%d HTTP %d",
-                      attempt + 1, maxFetchRetries + 1, httpResponse.statusCode)
+                log.error("attempt \(attempt + 1)/\(maxFetchRetries + 1) HTTP \(httpResponse.statusCode)")
                 if isRetryableStatus(httpResponse.statusCode) { continue }
                 throw lastError
             }
 
+            let authenticated = !storedCookies.isEmpty || redirectDelegate.attachedCookies
+
             // Persist any refreshed session cookies so a rotating login
             // (NYT rotates NYT-S periodically) stays valid between clips.
             if authenticated {
-                let headerFields = (httpResponse.allHeaderFields as? [String: String]) ?? [:]
-                let refreshed = HTTPCookie.cookies(withResponseHeaderFields: headerFields, for: url)
-                if !refreshed.isEmpty {
-                    cookieStore.merge(refreshed)
+                mergeRefreshedCookies(from: httpResponse, requestURL: httpResponse.url ?? url, into: cookieStore)
+            }
+
+            // Reject PDFs, images, downloads etc. before reading the body —
+            // they would otherwise be decoded (e.g. as Latin-1) into garbage.
+            if let mime = mimeType(of: httpResponse), !isHTMLMimeType(mime) {
+                bytes.task.cancel()
+                log.error("non-HTML response (\(mime, privacy: .public)) for \(url.absoluteString, privacy: .private)")
+                throw FetchError.notHTML(mime)
+            }
+
+            var data = Data()
+            var truncated = false
+            do {
+                data.reserveCapacity(min(Int(max(httpResponse.expectedContentLength, 0)), maxResponseBytes))
+                for try await byte in bytes {
+                    if data.count >= maxResponseBytes {
+                        truncated = true
+                        break
+                    }
+                    data.append(byte)
                 }
+            } catch {
+                if (error as? URLError)?.code == .cancelled || error is CancellationError || Task.isCancelled {
+                    throw CancellationError()
+                }
+                lastError = .network(error.localizedDescription)
+                log.error("attempt \(attempt + 1)/\(maxFetchRetries + 1) body read failed: \(error.localizedDescription, privacy: .public)")
+                continue
+            }
+            if truncated {
+                bytes.task.cancel()
+                log.notice("response truncated at \(maxResponseBytes) bytes for \(url.absoluteString, privacy: .private)")
             }
 
             let encoding = Self.detectEncoding(response: httpResponse, body: data)
+            if truncated, encoding == .utf8 {
+                data = trimmingIncompleteUTF8Tail(data)
+            }
+            // A body without a MIME type that is actually binary must never
+            // reach the parser (Latin-1 decodes any byte sequence).
+            if encoding != .utf16, looksBinary(data) {
+                throw FetchError.notHTML("application/octet-stream")
+            }
             if let html = String(data: data, encoding: encoding) ?? String(data: data, encoding: .utf8) {
                 return (html, authenticated)
             }
@@ -364,6 +422,60 @@ enum WebContentExtractor {
         }
 
         throw lastError
+    }
+
+    /// Lowercased MIME type from the Content-Type header (nil when absent).
+    private static func mimeType(of response: HTTPURLResponse) -> String? {
+        guard let contentType = response.value(forHTTPHeaderField: "Content-Type") else { return nil }
+        let mime = contentType.split(separator: ";", maxSplits: 1).first
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() } ?? ""
+        return mime.isEmpty ? nil : mime
+    }
+
+    static func isHTMLMimeType(_ mime: String) -> Bool {
+        mime == "text/html" || mime == "application/xhtml+xml"
+    }
+
+    /// NUL bytes in the first KB are a reliable binary tell for 8-bit and
+    /// UTF-8 text encodings.
+    private static func looksBinary(_ data: Data) -> Bool {
+        data.prefix(1024).contains(0)
+    }
+
+    /// Drop a multi-byte UTF-8 sequence cut off by truncation so strict
+    /// decoding doesn't reject the whole document.
+    static func trimmingIncompleteUTF8Tail(_ data: Data) -> Data {
+        let bytes = [UInt8](data.suffix(4))
+        guard !bytes.isEmpty else { return data }
+        // Find the last non-continuation byte.
+        var index = bytes.count - 1
+        while index > 0 && bytes[index] & 0xC0 == 0x80 { index -= 1 }
+        let lead = bytes[index]
+        let needed: Int
+        switch lead {
+        case 0x00..<0x80: needed = 1
+        case 0xC0..<0xE0: needed = 2
+        case 0xE0..<0xF0: needed = 3
+        case 0xF0..<0xF8: needed = 4
+        default: return data
+        }
+        let available = bytes.count - index
+        if available < needed {
+            return data.prefix(data.count - available)
+        }
+        return data
+    }
+
+    /// Merge Set-Cookie refreshes from `response`, parsed against the URL that
+    /// actually served it, keeping only cookies for sites already in the store
+    /// (a redirect to another host can't plant cookies for it).
+    fileprivate static func mergeRefreshedCookies(from response: HTTPURLResponse, requestURL: URL, into store: CookieStoring) {
+        let headerFields = (response.allHeaderFields as? [String: String]) ?? [:]
+        let parsed = HTTPCookie.cookies(withResponseHeaderFields: headerFields, for: requestURL)
+        let refreshed = SiteCookies.restrictedToStoredSites(parsed, stored: store.loadAll())
+        if !refreshed.isEmpty {
+            store.merge(refreshed)
+        }
     }
 
     /// Returns true if the URL uses a scheme safe for network fetching (http/https only).
@@ -485,5 +597,53 @@ enum WebContentExtractor {
             .replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&#39;", with: "'")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Per-task delegate for the page re-fetch. URLSession copies custom headers
+/// (including a manually set Cookie) onto every redirect hop, which would leak
+/// a site-login session to whatever host the page redirects to. Each hop's
+/// Cookie header is therefore rebuilt from the store for the new URL only.
+private final class CookieRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+
+    private let cookieStore: CookieStoring
+    private let lock = NSLock()
+    private var _attachedCookies = false
+
+    /// True when a redirect hop received stored cookies (e.g. http -> https).
+    var attachedCookies: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _attachedCookies
+    }
+
+    init(cookieStore: CookieStoring) {
+        self.cookieStore = cookieStore
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        // Refreshes delivered on an authenticated redirect hop still count.
+        if task.currentRequest?.value(forHTTPHeaderField: "Cookie") != nil,
+           let hopURL = response.url ?? task.currentRequest?.url {
+            WebContentExtractor.mergeRefreshedCookies(from: response, requestURL: hopURL, into: cookieStore)
+        }
+
+        var redirected = request
+        redirected.setValue(nil, forHTTPHeaderField: "Cookie")
+        if let newURL = redirected.url {
+            let cookies = cookieStore.cookies(for: newURL)
+            if !cookies.isEmpty,
+               let header = HTTPCookie.requestHeaderFields(with: cookies)["Cookie"] {
+                redirected.httpShouldHandleCookies = false
+                redirected.setValue(header, forHTTPHeaderField: "Cookie")
+                lock.lock(); _attachedCookies = true; lock.unlock()
+            }
+        }
+        completionHandler(redirected)
     }
 }

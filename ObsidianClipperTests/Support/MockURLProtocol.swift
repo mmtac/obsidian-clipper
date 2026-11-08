@@ -37,6 +37,19 @@ final class MockURLProtocol: URLProtocol {
         }
         do {
             let (response, data) = try handler(request)
+            // A 3xx with a Location header is surfaced as a redirect, the way
+            // URLSession does: the follow-up request carries the original
+            // request's headers (incl. any manual Cookie) so the session's
+            // redirect delegate is exercised exactly as in production.
+            if (300...399).contains(response.statusCode),
+               let location = response.value(forHTTPHeaderField: "Location"),
+               let target = URL(string: location, relativeTo: request.url)?.absoluteURL {
+                var redirected = request
+                redirected.url = target
+                client?.urlProtocol(self, wasRedirectedTo: redirected, redirectResponse: response)
+                client?.urlProtocolDidFinishLoading(self)
+                return
+            }
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)
