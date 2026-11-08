@@ -1,4 +1,5 @@
 import XCTest
+import ImageIO
 @testable import ClipperExtension
 
 final class ImageProcessorTests: XCTestCase {
@@ -277,5 +278,47 @@ final class ImageProcessorTests: XCTestCase {
             png.append(Data(count: sizeBytes - png.count))
         }
         return png
+    }
+
+    // MARK: - ImageIO thumbnail decode
+
+    private func makeLargePNG(width: Int, height: Int) throws -> Data {
+        let space = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+            throw XCTSkip("Could not allocate CGContext")
+        }
+        ctx.setFillColor(CGColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let image = ctx.makeImage() else { throw XCTSkip("makeImage failed") }
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, "public.png" as CFString, 1, nil) else {
+            throw XCTSkip("No PNG destination")
+        }
+        CGImageDestinationAddImage(dest, image, nil)
+        guard CGImageDestinationFinalize(dest) else { throw XCTSkip("PNG encode failed") }
+        return data as Data
+    }
+
+    func testDownscaledCGImageFromLargeFileIsBounded() throws {
+        let png = try makeLargePNG(width: 6000, height: 4000)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("clipper-large-\(UUID().uuidString).png")
+        try png.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let cg = try XCTUnwrap(ImageProcessor.downscaledCGImage(contentsOf: url))
+        XCTAssertLessThanOrEqual(max(cg.width, cg.height), ImageProcessor.maxOCRDimension)
+        XCTAssertEqual(max(cg.width, cg.height), ImageProcessor.maxOCRDimension)
+    }
+
+    func testDownscaledCGImageFromLargeDataIsBounded() throws {
+        let png = try makeLargePNG(width: 4000, height: 6000)
+        let cg = try XCTUnwrap(ImageProcessor.downscaledCGImage(data: png))
+        XCTAssertLessThanOrEqual(max(cg.width, cg.height), ImageProcessor.maxOCRDimension)
+    }
+
+    func testDownscaledCGImageRejectsNonImageData() {
+        XCTAssertNil(ImageProcessor.downscaledCGImage(data: Data("not an image".utf8)))
     }
 }

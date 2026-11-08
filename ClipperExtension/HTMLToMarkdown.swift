@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Converts HTML content to Markdown by parsing the HTML into a DOM tree
 /// and walking it to emit Markdown syntax. Uses the same HTMLParser as
@@ -9,16 +10,30 @@ enum HTMLToMarkdown {
     /// in the share extension's constrained environment.
     static let maxHTMLSize = 2 * 1024 * 1024 // 2 MB
 
+    private static let logger = Logger(subsystem: "com.obsidian.clipper", category: "markdown")
+
+    /// Truncate `s` to at most `maxBytes` UTF-8 bytes, cutting on a valid
+    /// UTF-8 scalar boundary. Never returns more than `maxBytes` bytes and
+    /// never falls back to the untruncated input. The result is always a
+    /// prefix of `s` (by Unicode scalars).
+    static func truncateUTF8(_ s: String, maxBytes: Int) -> String {
+        let utf8 = s.utf8
+        guard maxBytes > 0 else { return "" }
+        guard utf8.count > maxBytes else { return s }
+        var end = utf8.index(utf8.startIndex, offsetBy: maxBytes)
+        // Walk back off UTF-8 continuation bytes (10xxxxxx) so `end` lands
+        // on the first byte of a scalar.
+        while end > utf8.startIndex, (utf8[end] & 0xC0) == 0x80 {
+            end = utf8.index(before: end)
+        }
+        return String(s.unicodeScalars[..<end])
+    }
+
     /// Main entry point: takes raw HTML and returns Markdown text.
     /// Pure Swift — no UIKit/WebKit dependency, safe to call from any thread.
     static func convert(_ html: String) -> String {
-        var htmlToConvert = html
-
         // Truncate oversized HTML to prevent memory exhaustion
-        if let data = html.data(using: .utf8), data.count > maxHTMLSize {
-            let truncated = data.prefix(maxHTMLSize)
-            htmlToConvert = String(data: truncated, encoding: .utf8) ?? html
-        }
+        let htmlToConvert = truncateUTF8(html, maxBytes: maxHTMLSize)
 
         var parser = HTMLParser(html: htmlToConvert)
         guard let document = parser.parse() else {
@@ -67,6 +82,9 @@ enum HTMLToMarkdown {
         var inPre = false
         var inCode = false
         var listStack: [ListKind] = []
+        /// Current element nesting depth; rendering stops descending past
+        /// `HTMLNode.maxDepth` so pathological pages can't overflow the stack.
+        var depth = 0
 
         enum ListKind { case ordered(Int), unordered }
 
@@ -113,6 +131,9 @@ enum HTMLToMarkdown {
     private static let headingTags: Set<String> = ["h1", "h2", "h3", "h4", "h5", "h6"]
 
     private static func renderNode(_ node: HTMLNode, to ctx: inout MarkdownContext) {
+        guard ctx.depth < HTMLNode.maxDepth else { return }
+        ctx.depth += 1
+        defer { ctx.depth -= 1 }
         switch node.kind {
         case .text(let text):
             if ctx.inPre {
@@ -147,7 +168,7 @@ enum HTMLToMarkdown {
 
             case "h1", "h2", "h3", "h4", "h5", "h6":
                 ctx.ensureBlankLine()
-                let level = Int(String(tag.last!))!
+                let level = tag.last?.wholeNumberValue ?? 1
                 ctx.result += String(repeating: "#", count: level) + " "
                 renderChildrenInline(node, to: &ctx)
                 ctx.ensureBlankLine()
@@ -200,6 +221,7 @@ enum HTMLToMarkdown {
                 ctx.ensureBlankLine()
                 // Render children to a sub-context, then prefix each line with >
                 var sub = MarkdownContext()
+                sub.depth = ctx.depth
                 renderChildren(node, to: &sub)
                 let lines = sub.result.trimmingCharacters(in: .whitespacesAndNewlines)
                     .components(separatedBy: "\n")
@@ -400,8 +422,7 @@ enum HTMLToMarkdown {
     /// The markers survive Readability extraction and tree-based Markdown conversion as plain text,
     /// allowing us to place images inline at their original positions in the final Markdown.
     static func replaceImgTagsWithMarkers(_ html: String, baseURL: URL?) -> (html: String, markerMap: [Int: URL]) {
-        NSLog("[Clipper.markdown] replaceImgTagsWithMarkers() entered; html_len=%d baseURL=%@",
-              html.count, (baseURL?.absoluteString ?? "nil") as NSString)
+        logger.debug("replaceImgTagsWithMarkers() entered; html_bytes=\(html.utf8.count, privacy: .public) baseURL=\(baseURL?.absoluteString ?? "nil", privacy: .private)")
         var markerMap: [Int: URL] = [:]
         var markerIndex = 0
         var seen: [String: Int] = [:] // URL string -> marker index
@@ -410,12 +431,12 @@ enum HTMLToMarkdown {
         let fullRange = NSRange(location: 0, length: nsHTML.length)
 
         guard let imgRegex = Self.imgTagRegex else {
-            NSLog("[Clipper.markdown] replaceImgTagsWithMarkers() img regex unavailable; returning input")
+            logger.error("replaceImgTagsWithMarkers() img regex unavailable; returning input")
             return (html, markerMap)
         }
 
         let matches = imgRegex.matches(in: html, range: fullRange)
-        NSLog("[Clipper.markdown] replaceImgTagsWithMarkers() <img> matches=%d", matches.count)
+        logger.debug("replaceImgTagsWithMarkers() <img> matches=\(matches.count, privacy: .public)")
 
         // Build replacements in forward order so marker indices match document order,
         // then apply in reverse so NSRange offsets remain valid.
@@ -515,15 +536,27 @@ enum HTMLToMarkdown {
                 markerIndex += 1
             }
         } else {
-            NSLog("[Clipper.markdown] replaceImgTagsWithMarkers() source regex unavailable; skipping <source> pass")
+            logger.error("replaceImgTagsWithMarkers() source regex unavailable; skipping <source> pass")
         }
 
         // Apply replacements in reverse so offsets stay valid. Source matches may be
         // interleaved with img matches, so sort by location first.
-        var result = html
+        // A <source> match can sit inside an <img> attribute value (e.g.
+        // `<img alt="<source src=x>" src="a.png">`), producing overlapping
+        // ranges; replacing both would corrupt offsets. Keep the earliest
+        // match and drop anything overlapping the previously kept range.
         let sorted = replacements.sorted { $0.range.location < $1.range.location }
-        for replacement in sorted.reversed() {
-            let swiftRange = Range(replacement.range, in: result)!
+        var kept: [(range: NSRange, marker: String)] = []
+        kept.reserveCapacity(sorted.count)
+        for replacement in sorted {
+            if let last = kept.last, replacement.range.location < NSMaxRange(last.range) {
+                continue
+            }
+            kept.append(replacement)
+        }
+        var result = html
+        for replacement in kept.reversed() {
+            guard let swiftRange = Range(replacement.range, in: result) else { continue }
             result.replaceSubrange(swiftRange, with: replacement.marker)
         }
 
@@ -551,7 +584,7 @@ enum HTMLToMarkdown {
     /// actually appear in the final article body.
     static func findMarkerIndices(in text: String) -> Set<Int> {
         guard let regex = markerRegex else {
-            NSLog("[Clipper.markdown] findMarkerIndices() regex unavailable; returning empty")
+            logger.error("findMarkerIndices() regex unavailable; returning empty")
             return []
         }
         let ns = text as NSString
@@ -563,7 +596,7 @@ enum HTMLToMarkdown {
                 indices.insert(n)
             }
         }
-        NSLog("[Clipper.markdown] findMarkerIndices() text_len=%d surviving=%d", text.count, indices.count)
+        logger.debug("findMarkerIndices() text_bytes=\(text.utf8.count, privacy: .public) surviving=\(indices.count, privacy: .public)")
         return indices
     }
 
@@ -571,8 +604,7 @@ enum HTMLToMarkdown {
     /// `markerToFilename` maps marker index to the local filename (e.g. "images/abc-1.png").
     /// Returns the processed Markdown and a set of marker indices that were placed inline.
     static func replaceMarkersWithImages(_ markdown: String, markerToPath: [Int: String]) -> (markdown: String, placedIndices: Set<Int>) {
-        NSLog("[Clipper.markdown] replaceMarkersWithImages() entered; markdown_len=%d markerToPath=%d",
-              markdown.count, markerToPath.count)
+        logger.debug("replaceMarkersWithImages() entered; markdown_bytes=\(markdown.utf8.count, privacy: .public) markerToPath=\(markerToPath.count, privacy: .public)")
         var result = markdown
         var placed = Set<Int>()
 
@@ -585,8 +617,7 @@ enum HTMLToMarkdown {
             }
         }
 
-        NSLog("[Clipper.markdown] replaceMarkersWithImages() done; placed=%d unplaced=%d",
-              placed.count, markerToPath.count - placed.count)
+        logger.debug("replaceMarkersWithImages() done; placed=\(placed.count, privacy: .public) unplaced=\(markerToPath.count - placed.count, privacy: .public)")
         return (result, placed)
     }
 
@@ -678,20 +709,27 @@ enum HTMLToMarkdown {
     }
 
     /// Cache for compiled attribute-extraction regexes, keyed by attribute name.
+    /// Guarded by `attributeRegexCacheLock`: the pipeline runs conversion off
+    /// the main actor, so this cache can be touched from any thread.
     private static var attributeRegexCache: [String: NSRegularExpression] = [:]
+    private static let attributeRegexCacheLock = NSLock()
 
     /// Extract a named attribute value from an HTML tag string.
     private static func extractAttribute(_ name: String, from tag: String) -> String? {
         // Match: name="value" or name='value' or name=value
         let regex: NSRegularExpression
+        attributeRegexCacheLock.lock()
         if let cached = attributeRegexCache[name] {
             regex = cached
+            attributeRegexCacheLock.unlock()
         } else {
             let pattern = name + #"\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))"#
             guard let compiled = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+                attributeRegexCacheLock.unlock()
                 return nil
             }
             attributeRegexCache[name] = compiled
+            attributeRegexCacheLock.unlock()
             regex = compiled
         }
 

@@ -1,9 +1,12 @@
 import Foundation
-import UIKit
+import ImageIO
+import os
 import Vision
 
 /// Downloads images from URLs and performs OCR using Apple's Vision framework.
 actor ImageProcessor {
+
+    private static let logger = Logger(subsystem: "com.obsidian.clipper", category: "image")
 
     /// Concurrent in-flight downloads+OCR. Share extensions have a ~50MB RAM
     /// budget and Vision `.accurate` allocates 2–5MB per image; keep this low.
@@ -25,7 +28,7 @@ actor ImageProcessor {
     }
 
     /// Longest edge (in pixels) before downscaling prior to OCR.
-    private static let maxOCRDimension: CGFloat = 2048
+    static let maxOCRDimension = 2048
 
     /// Minimum fraction of image area that recognized text must cover for
     /// the OCR result to be kept. Below this, the text is judged
@@ -98,8 +101,7 @@ actor ImageProcessor {
     /// Download images from the given URLs and optionally run OCR on each.
     /// `prefix` becomes part of each saved filename to avoid collisions across clips.
     func process(urls: [URL], enableOCR: Bool, prefix: String) async -> [ExtractedImage] {
-        NSLog("[Clipper.image] process() entered; urls=%d enableOCR=%d prefix=%@ maxConcurrent=%d",
-              urls.count, enableOCR ? 1 : 0, prefix as NSString, maxConcurrent)
+        Self.logger.debug("process() entered; urls=\(urls.count, privacy: .public) enableOCR=\(enableOCR, privacy: .public) maxConcurrent=\(self.maxConcurrent, privacy: .public)")
         totalBytesDownloaded = 0
         inFlightCount = 0
         let result = await withTaskGroup(of: ExtractedImage?.self) { group in
@@ -132,7 +134,7 @@ actor ImageProcessor {
             }
             return results.sorted { $0.filename < $1.filename }
         }
-        NSLog("[Clipper.image] process() done; kept=%d totalBytes=%d", result.count, totalBytesDownloaded)
+        Self.logger.debug("process() done; kept=\(result.count, privacy: .public) totalBytes=\(self.totalBytesDownloaded, privacy: .public)")
         return result
     }
 
@@ -140,8 +142,7 @@ actor ImageProcessor {
     /// Runs OCR if enabled and returns ExtractedImage results.
     /// Uses the same concurrency cap as `process()` to stay within the extension memory budget.
     func processSharedImages(_ imageDataList: [Data], enableOCR: Bool, prefix: String) async -> [ExtractedImage] {
-        NSLog("[Clipper.image] processSharedImages() entered; count=%d enableOCR=%d prefix=%@",
-              imageDataList.count, enableOCR ? 1 : 0, prefix as NSString)
+        Self.logger.debug("processSharedImages() entered; count=\(imageDataList.count, privacy: .public) enableOCR=\(enableOCR, privacy: .public)")
         totalBytesDownloaded = 0
         inFlightCount = 0
         // Limit to 10 shared images to stay within the 50MB extension budget
@@ -197,20 +198,15 @@ actor ImageProcessor {
             return nil
         }
 
-        // Validate the file is a decodable image and optionally get a downscaled
-        // CGImage for OCR. Use autoreleasepool so UIImage intermediates are freed.
-        var isValid = false
-        let cgForOCR: CGImage? = autoreleasepool {
-            guard let uiImage = UIImage(contentsOfFile: destURL.path) else { return nil }
-            isValid = true
-            guard enableOCR else { return nil }
-            return Self.downscaledCGImage(from: uiImage)
-        }
-
-        guard isValid else {
+        // Validate the data is a decodable image and optionally get a downscaled
+        // CGImage for OCR. ImageIO thumbnailing decodes straight to the target
+        // size, never materializing the full-resolution bitmap.
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              Self.isDecodable(source) else {
             try? FileManager.default.removeItem(at: destURL)
             return nil
         }
+        let cgForOCR: CGImage? = enableOCR ? Self.thumbnail(from: source) : nil
 
         let ocrText: String?
         if let cg = cgForOCR {
@@ -219,7 +215,7 @@ actor ImageProcessor {
             ocrText = nil
         }
 
-        let sourceURL = URL(string: "shared-image://\(filename)")!
+        let sourceURL = URL(string: "shared-image://\(filename)") ?? destURL
 
         return ExtractedImage(
             sourceURL: sourceURL,
@@ -254,27 +250,27 @@ actor ImageProcessor {
 
     private func downloadAndProcess(url: URL, index: Int, prefix: String, enableOCR: Bool) async -> ExtractedImage? {
         guard !Task.isCancelled else {
-            NSLog("[Clipper.image] download[%d] cancelled before start; url=%@", index, url.absoluteString as NSString)
+            Self.logger.debug("download[\(index, privacy: .public)] cancelled before start; url=\(url.absoluteString, privacy: .private)")
             return nil
         }
 
         // Only fetch over http(s). Blocks file://, javascript:, ftp:, data:, etc.
         guard Self.isFetchableScheme(url) else {
-            NSLog("[Clipper.image] download[%d] scheme rejected; url=%@", index, url.absoluteString as NSString)
+            Self.logger.info("download[\(index, privacy: .public)] scheme rejected; url=\(url.absoluteString, privacy: .private)")
             return nil
         }
 
-        NSLog("[Clipper.image] download[%d] GET %@", index, url.absoluteString as NSString)
+        Self.logger.debug("download[\(index, privacy: .public)] GET \(url.absoluteString, privacy: .private)")
 
         // Stream the download straight to a system temp file. This keeps the image
         // bytes out of RAM — only the filesystem URL + URLResponse are held here.
         guard let (downloadedURL, response) = try? await Self.session.download(from: url) else {
-            NSLog("[Clipper.image] download[%d] FAILED (network/timeout); url=%@", index, url.absoluteString as NSString)
+            Self.logger.info("download[\(index, privacy: .public)] FAILED (network/timeout); url=\(url.absoluteString, privacy: .private)")
             return nil
         }
         let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? -1
-        NSLog("[Clipper.image] download[%d] status=%d mime=%@", index, httpStatus,
-              ((response as? HTTPURLResponse)?.mimeType ?? response.mimeType ?? "nil") as NSString)
+        let loggedMime = (response as? HTTPURLResponse)?.mimeType ?? response.mimeType ?? "nil"
+        Self.logger.debug("download[\(index, privacy: .public)] status=\(httpStatus, privacy: .public) mime=\(loggedMime, privacy: .public)")
 
         guard !Task.isCancelled else {
             try? FileManager.default.removeItem(at: downloadedURL)
@@ -311,41 +307,34 @@ actor ImageProcessor {
         // still get through.
         let fileSize = (try? fm.attributesOfItem(atPath: destURL.path)[.size] as? Int) ?? 0
         guard shouldAcceptImageSize(fileSize) else {
-            NSLog("[Clipper.image] download[%d] size cap REJECTED; bytes=%d totalSoFar=%d",
-                  index, fileSize, totalBytesDownloaded)
+            Self.logger.info("download[\(index, privacy: .public)] size cap REJECTED; bytes=\(fileSize, privacy: .public) totalSoFar=\(self.totalBytesDownloaded, privacy: .public)")
             try? fm.removeItem(at: destURL)
             return nil
         }
         totalBytesDownloaded += fileSize
-        NSLog("[Clipper.image] download[%d] saved; filename=%@ bytes=%d totalSoFar=%d",
-              index, filename as NSString, fileSize, totalBytesDownloaded)
+        Self.logger.debug("download[\(index, privacy: .public)] saved; filename=\(filename, privacy: .public) bytes=\(fileSize, privacy: .public) totalSoFar=\(self.totalBytesDownloaded, privacy: .public)")
 
         // Verify it's actually an image. Prefer the URLResponse MIME type; if
-        // absent, probe with UIImage(contentsOfFile:) inside autoreleasepool.
+        // absent, probe the header with ImageIO (no pixel decode).
         let isImageMime = mimeType?.hasPrefix("image/") ?? false
         if !isImageMime {
-            let valid = autoreleasepool { UIImage(contentsOfFile: destURL.path) != nil }
+            let valid = CGImageSourceCreateWithURL(destURL as CFURL, nil).map(Self.isDecodable) ?? false
             guard valid else {
-                NSLog("[Clipper.image] download[%d] MIME-validation FAILED; mime=%@",
-                      index, (mimeType ?? "nil") as NSString)
+                Self.logger.info("download[\(index, privacy: .public)] MIME-validation FAILED; mime=\(mimeType ?? "nil", privacy: .public)")
                 try? fm.removeItem(at: destURL)
                 return nil
             }
         }
 
-        // Run OCR if enabled. Downscale inside autoreleasepool to release UIImage promptly.
+        // Run OCR if enabled. ImageIO thumbnails decode directly at <= 2048px.
         let ocrText: String?
         if enableOCR {
-            let cgForOCR: CGImage? = autoreleasepool {
-                guard let uiImage = UIImage(contentsOfFile: destURL.path) else { return nil }
-                return Self.downscaledCGImage(from: uiImage)
-            }
+            let cgForOCR = Self.downscaledCGImage(contentsOf: destURL)
             if let cg = cgForOCR {
                 ocrText = await recognizeText(in: cg)
-                NSLog("[Clipper.image] download[%d] OCR done; recognized=%d chars",
-                      index, ocrText?.count ?? -1)
+                Self.logger.debug("download[\(index, privacy: .public)] OCR done; recognized=\(ocrText?.count ?? -1, privacy: .public) chars")
             } else {
-                NSLog("[Clipper.image] download[%d] OCR skipped; cgForOCR=nil", index)
+                Self.logger.debug("download[\(index, privacy: .public)] OCR skipped; cgForOCR=nil")
                 ocrText = nil
             }
         } else {
@@ -360,25 +349,36 @@ actor ImageProcessor {
         )
     }
 
-    /// Downscale a `UIImage` so its longest edge is at most `maxOCRDimension`,
-    /// returning a `CGImage` suitable for Vision. Returns the original CGImage
-    /// if it is already small enough.
-    private static func downscaledCGImage(from image: UIImage) -> CGImage? {
-        guard let cg = image.cgImage else { return nil }
-        let w = CGFloat(cg.width)
-        let h = CGFloat(cg.height)
-        let longest = max(w, h)
-        guard longest > maxOCRDimension else { return cg }
+    /// Decode an image file to a `CGImage` whose longest edge is at most
+    /// `maxOCRDimension`, using ImageIO thumbnailing. Unlike a full UIKit
+    /// decode + redraw, this never materializes the full-resolution bitmap
+    /// (an 8000×6000 photo would be ~192 MB — past the share extension's
+    /// whole memory budget).
+    static func downscaledCGImage(contentsOf url: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return thumbnail(from: source)
+    }
 
-        let scale = maxOCRDimension / longest
-        let newSize = CGSize(width: w * scale, height: h * scale)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        let renderer = UIGraphicsImageRenderer(size: newSize, format: format)
-        let resized = renderer.image { _ in
-            UIImage(cgImage: cg).draw(in: CGRect(origin: .zero, size: newSize))
-        }
-        return resized.cgImage
+    /// In-memory variant of `downscaledCGImage(contentsOf:)`.
+    static func downscaledCGImage(data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return thumbnail(from: source)
+    }
+
+    /// True when ImageIO recognizes the container and it holds >= 1 image.
+    /// Reads only the header; no pixel decode.
+    private static func isDecodable(_ source: CGImageSource) -> Bool {
+        CGImageSourceGetType(source) != nil && CGImageSourceGetCount(source) > 0
+    }
+
+    private static func thumbnail(from source: CGImageSource) -> CGImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: maxOCRDimension,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 
     /// Perform OCR on a CGImage using VNRecognizeTextRequest. Returns
@@ -393,23 +393,40 @@ actor ImageProcessor {
         // timeout. The first-resume guard guarantees the continuation resumes
         // exactly once; on timeout the orphaned Vision task is abandoned and
         // its eventual result discarded rather than hanging the clip.
+        //
+        // The request is created here so the timeout path can `cancel()` it:
+        // Vision then aborts `perform` early instead of burning CPU/memory on
+        // an abandoned image while the clip moves on.
         let resumed = ResumeOnce()
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        let box = UncheckedSendableBox(request)
         return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            let timeout = Task.detached {
+                try? await Task.sleep(for: .seconds(Self.ocrTimeoutSeconds))
+                if resumed.tryClaim() {
+                    Self.logger.info("OCR TIMEOUT after \(Self.ocrTimeoutSeconds, privacy: .public)s; cancelling request")
+                    box.value.cancel()
+                    continuation.resume(returning: nil)
+                }
+            }
             Task.detached(priority: .userInitiated) {
-                let text = Self.performOCRSync(on: image)
+                let text = Self.performOCRSync(request: box.value, on: image)
+                timeout.cancel()
                 if resumed.tryClaim() {
                     continuation.resume(returning: text)
                 }
             }
-            Task.detached {
-                try? await Task.sleep(for: .seconds(Self.ocrTimeoutSeconds))
-                if resumed.tryClaim() {
-                    NSLog("[Clipper.image] OCR TIMEOUT after %.0fs; dropping OCR for this image",
-                          Self.ocrTimeoutSeconds)
-                    continuation.resume(returning: nil)
-                }
-            }
         }
+    }
+
+    /// Carries a non-Sendable Vision request across the OCR/timeout tasks.
+    /// `VNRequest.cancel()` may be called from another thread while
+    /// `perform` runs; nothing else touches the request concurrently.
+    private final class UncheckedSendableBox<T>: @unchecked Sendable {
+        let value: T
+        init(_ value: T) { self.value = value }
     }
 
     /// Lock-guarded once flag so the OCR/timeout race resumes its continuation
@@ -428,16 +445,12 @@ actor ImageProcessor {
 
     /// Synchronous Vision OCR with the coverage filter. `handler.perform` blocks
     /// the calling thread, so this must run off the actor (see `recognizeText`).
-    private static func performOCRSync(on image: CGImage) -> String? {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-
+    private static func performOCRSync(request: VNRecognizeTextRequest, on image: CGImage) -> String? {
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do {
             try handler.perform([request])
         } catch {
-            NSLog("[Clipper.image] OCR perform FAILED: %@", error.localizedDescription as NSString)
+            logger.info("OCR perform FAILED: \(error.localizedDescription, privacy: .public)")
             return nil
         }
 
@@ -451,8 +464,7 @@ actor ImageProcessor {
             .joined(separator: "\n")
 
         let kept = coverage >= textCoverageThreshold && !text.isEmpty
-        NSLog("[Clipper.image] OCR coverage=%.3f chars=%d threshold=%.3f kept=%d",
-              Double(coverage), text.count, Double(textCoverageThreshold), kept ? 1 : 0)
+        logger.debug("OCR coverage=\(Double(coverage), privacy: .public) chars=\(text.count, privacy: .public) threshold=\(Double(textCoverageThreshold), privacy: .public) kept=\(kept, privacy: .public)")
 
         return kept ? text : nil
     }

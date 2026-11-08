@@ -28,7 +28,7 @@ final class ShareViewController: UIViewController {
     private let viewModel = ShareViewModel()
     /// Guards against double-completion of the extension context.
     /// Accessed from both the main-actor Task and UI callbacks, so
-    /// we protect it with an os_unfair_lock for thread safety.
+    /// we protect it with an NSLock for thread safety.
     private var didComplete = false
     private let didCompleteLock = NSLock()
     /// Handle to the clipping Task so we can cancel it when the user taps Cancel.
@@ -103,12 +103,17 @@ final class ShareViewController: UIViewController {
     // MARK: - Clipping Pipeline
 
     private func startClipping() {
+        // Block swipe-to-dismiss while clipping: an interactive dismissal
+        // would tear down the sheet without completing or cancelling the
+        // extension request. Re-enabled once we reach success/error.
+        isModalInPresentation = true
         clippingTask = Task { [weak self] in
             do {
                 guard let self else { return }
                 let result = try await self.performClipping()
 
                 guard !Task.isCancelled else { return }
+                self.isModalInPresentation = false
                 self.viewModel.state = .success(result)
 
                 // Auto-dismiss after a short delay
@@ -116,8 +121,16 @@ final class ShareViewController: UIViewController {
                 guard !Task.isCancelled else { return }
                 self.done()
             } catch {
+                guard let self else { return }
+                // Error path never reaches the success cleanup in
+                // performClipping; drop the scratch temp files here.
+                if let processor = self.imageProcessor {
+                    self.imageProcessor = nil
+                    await processor.cleanup()
+                }
                 guard !Task.isCancelled else { return }
-                self?.viewModel.state = .error(error.localizedDescription)
+                self.isModalInPresentation = false
+                self.viewModel.state = .error(error.localizedDescription)
             }
         }
     }
@@ -142,6 +155,11 @@ final class ShareViewController: UIViewController {
 
     private func done() {
         guard trySetComplete() else { return }
+        isModalInPresentation = false
+        if let processor = imageProcessor {
+            imageProcessor = nil
+            Task { await processor.cleanup() }
+        }
         extensionContext?.completeRequest(returningItems: nil)
     }
 

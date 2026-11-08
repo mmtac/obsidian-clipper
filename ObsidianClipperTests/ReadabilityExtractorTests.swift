@@ -796,4 +796,42 @@ final class ReadabilityExtractorTests: XCTestCase {
         XCTAssertTrue(serialized.contains("Second Section"), "All sections should survive")
         XCTAssertTrue(serialized.contains("Third Section"), "All sections should survive")
     }
+
+    // MARK: - Deep nesting (stack-overflow guards)
+
+    private func deeplyNestedPage(depth: Int) -> String {
+        let article = "<article><h1>Deep Title</h1>" + String(repeating: "<p>Real article prose, long enough to score well, with commas, and more words. </p>", count: 10) + "</article>"
+        return "<html><head><title>Deep</title></head><body>" + article
+            + String(repeating: "<div>", count: depth) + "deep text"
+            + String(repeating: "</div>", count: depth) + "</body></html>"
+    }
+
+    func testSwiftSoupAdapterDeepNestingIsDepthCapped() {
+        guard let root = SwiftSoupAdapter.parse(html: deeplyNestedPage(depth: 5_000)) else {
+            return XCTFail("parse failed")
+        }
+        var maxDepth = 0
+        var stack: [(HTMLNode, Int)] = [(root, 0)]
+        while let (node, d) = stack.popLast() {
+            maxDepth = max(maxDepth, d)
+            for child in node.children { stack.append((child, d + 1)) }
+        }
+        XCTAssertLessThanOrEqual(maxDepth, HTMLNode.maxDepth + 1)
+    }
+
+    func testReadabilityDeepNestingDoesNotCrash() {
+        let result = ReadabilityExtractor.extract(html: deeplyNestedPage(depth: 5_000), url: nil)
+        XCTAssertNotNil(result)
+        if let node = result?.articleNode {
+            XCTAssertTrue(node.textContent.contains("Real article prose"))
+        }
+    }
+
+    func testByteParserDeepNestingDoesNotCrash() {
+        var parser = HTMLParser(html: deeplyNestedPage(depth: 5_000))
+        let root = parser.parse()
+        XCTAssertNotNil(root)
+        XCTAssertTrue(root?.textContent.contains("deep text") ?? false)
+        _ = root?.serialize()
+    }
 }

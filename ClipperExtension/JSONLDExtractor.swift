@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Fast-path article extractor that pulls structured article data from
 /// `<script type="application/ld+json">` blocks (Schema.org Article /
@@ -15,7 +16,9 @@ import Foundation
 /// Callers should fall through to Readability when nil is returned.
 enum JSONLDExtractor {
 
-    struct Result {
+    private static let logger = Logger(subsystem: "com.obsidian.clipper", category: "jsonld")
+
+    struct Result: Sendable {
         let title: String
         /// Either an HTML fragment (if the publisher embedded HTML) or
         /// plain text. Use `articleBodyIsHTML` to disambiguate.
@@ -44,9 +47,9 @@ enum JSONLDExtractor {
     /// Try to extract an article body from JSON-LD. Returns nil when no
     /// substantial body is found.
     static func tryFastPath(html: String, minBodyChars: Int = 500) -> Result? {
-        NSLog("[Clipper.jsonld] tryFastPath() entered; html_len=%d minBodyChars=%d", html.count, minBodyChars)
+        logger.debug("tryFastPath() entered; html_len=\(html.utf8.count, privacy: .public) minBodyChars=\(minBodyChars, privacy: .public)")
         let blocks = extractLDBlocks(from: html)
-        NSLog("[Clipper.jsonld] tryFastPath() ld+json blocks=%d", blocks.count)
+        logger.debug("tryFastPath() ld+json blocks=\(blocks.count, privacy: .public)")
         if blocks.isEmpty { return nil }
 
         var best: [String: Any]? = nil
@@ -74,7 +77,7 @@ enum JSONLDExtractor {
               let body = article["articleBody"] as? String,
               body.count >= minBodyChars
         else {
-            NSLog("[Clipper.jsonld] tryFastPath() MISS; bestBodyLen=%d (< minBodyChars=%d or no article)", bestBodyLen, minBodyChars)
+            logger.debug("tryFastPath() MISS; bestBodyLen=\(bestBodyLen, privacy: .public) (< minBodyChars=\(minBodyChars, privacy: .public) or no article)")
             return nil
         }
 
@@ -97,8 +100,7 @@ enum JSONLDExtractor {
         default:                        imageShape = "other"
         }
         let imageURLs = extractImageURLs(from: article["image"])
-        NSLog("[Clipper.jsonld] tryFastPath() HIT; title_len=%d body_len=%d isHTML=%d image=%@ imageURLs=%d",
-              title.count, trimmed.count, isHTML ? 1 : 0, imageShape as NSString, imageURLs.count)
+        logger.debug("tryFastPath() HIT; title_len=\(title.count, privacy: .public) body_len=\(trimmed.count, privacy: .public) isHTML=\(isHTML, privacy: .public) image=\(imageShape, privacy: .public) imageURLs=\(imageURLs.count, privacy: .public)")
 
         return Result(
             title: decodeEntities(title),
@@ -147,7 +149,7 @@ enum JSONLDExtractor {
 
     /// Regex for `<script ... type="application/ld+json" ...>...</script>`,
     /// allowing any attribute order and quoted/unquoted type values.
-    private static let scriptRegex: NSRegularExpression = {
+    private static let scriptRegex: NSRegularExpression? = {
         // Pattern intentionally permissive on whitespace and attribute order.
         // Matches:
         //   <script type="application/ld+json">...
@@ -155,11 +157,12 @@ enum JSONLDExtractor {
         //   <script type=application/ld+json>...
         //   <script id="..." type="application/ld+json">...
         let pattern = #"<script\b[^>]*?type\s*=\s*["']?application/ld\+json["']?[^>]*>([\s\S]*?)</script\s*>"#
-        return try! NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        return try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
     }()
 
     private static func extractLDBlocks(from html: String) -> [String] {
         let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        guard let scriptRegex else { return [] }
         let matches = scriptRegex.matches(in: html, options: [], range: range)
         var blocks: [String] = []
         for m in matches where m.numberOfRanges >= 2 {
