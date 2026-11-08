@@ -234,4 +234,52 @@ final class FileSaverTests: XCTestCase {
         XCTAssertNotNil(resolved, "Persisted bookmark should resolve")
         XCTAssertFalse(resolved?.isStale ?? true, "Persisted bookmark should not be stale")
     }
+
+    // MARK: - Byte-length limits (filesystem caps components at 255 bytes)
+
+    func testSanitizeLongCJKTitleIsByteBounded() {
+        let title = String(repeating: "日本語のタイトル", count: 25) // 200 chars, 600 bytes
+        let result = FileSaver.sanitizeFilename(title)
+        XCTAssertLessThanOrEqual(result.utf8.count, FileSaver.maxTitleBytes)
+        XCTAssertFalse(result.isEmpty)
+        XCTAssertTrue(title.hasPrefix(result), "Truncation should keep a prefix on Character boundaries")
+    }
+
+    func testSanitizeEmojiTitleDoesNotSplitGraphemes() {
+        let family = "👨‍👩‍👧‍👦" // 25 UTF-8 bytes, one Character
+        let title = String(repeating: family, count: 20)
+        let result = FileSaver.sanitizeFilename(title)
+        XCTAssertLessThanOrEqual(result.utf8.count, FileSaver.maxTitleBytes)
+        XCTAssertEqual(result.count, FileSaver.maxTitleBytes / family.utf8.count)
+        XCTAssertTrue(result.allSatisfy { $0 == Character(family) })
+    }
+
+    @MainActor
+    func testSaveWithLongCJKTitleProducesBoundedNames() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("clipper-cjk-save-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let bookmark = try tmp.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+        let config = FileSaver.SaveConfig(targetFolder: "Inbox", includeFrontmatter: true, vaultBookmark: bookmark)
+        let title = String(repeating: "東京都の新しい記事タイトル", count: 16) // 208 chars
+        let clip = ClipResult(
+            title: title,
+            sourceURL: URL(string: "https://example.jp/a"),
+            markdownBody: "本文",
+            images: [],
+            clippedDate: Date()
+        )
+
+        // Save twice so the second hits the "-<timestamp>" re-clip suffix path.
+        let first = try FileSaver.save(clip, config: config)
+        let second = try FileSaver.save(clip, config: config)
+        for url in [first, second] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+            XCTAssertLessThanOrEqual(url.lastPathComponent.utf8.count, 255)
+            XCTAssertLessThanOrEqual(url.deletingLastPathComponent().lastPathComponent.utf8.count, 255)
+        }
+        XCTAssertNotEqual(first.deletingLastPathComponent(), second.deletingLastPathComponent())
+    }
 }

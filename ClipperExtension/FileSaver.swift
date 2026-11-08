@@ -1,8 +1,17 @@
 import Foundation
+import os
 
 /// Saves the clipped markdown note and images to the Obsidian vault folder
 /// using security-scoped bookmarks for file access.
 enum FileSaver {
+
+    private static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "save")
+
+    /// Maximum UTF-8 byte length of a sanitized title. APFS/HFS+ cap a single
+    /// path component at 255 *bytes* (not characters — a CJK character is 3
+    /// bytes, many emoji 4+). 200 leaves room for the `-<timestamp>` re-clip
+    /// suffix (11 bytes) and the `.md` extension.
+    static let maxTitleBytes = 200
 
     /// Sendable configuration extracted from ClipperSettings for use across actor boundaries.
     struct SaveConfig: Sendable {
@@ -34,11 +43,11 @@ enum FileSaver {
         var errorDescription: String? {
             switch self {
             case .noVaultConfigured:
-                return "No vault folder configured. Open Obsidian Clipper and select your vault folder."
+                return "No vault folder configured. Open Markdown Clipper and select your vault folder."
             case .bookmarkResolutionFailed:
                 return "Could not access the vault folder. Please re-select it in settings."
             case .accessDenied:
-                return "Permission denied. Please re-select the vault folder in Obsidian Clipper settings."
+                return "Permission denied. Please re-select the vault folder in Markdown Clipper settings."
             case .writeFailed(let detail):
                 return "Failed to write files: \(detail)"
             }
@@ -75,7 +84,7 @@ enum FileSaver {
             if let fresh = try? vaultURL.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
                 ClipperSettings.persistVaultBookmark(fresh)
             } else {
-                NSLog("[Clipper.save] stale bookmark refresh FAILED; will retry on next save")
+                logger.error("stale bookmark refresh FAILED; will retry on next save")
             }
         }
 
@@ -184,9 +193,23 @@ enum FileSaver {
         while sanitized.hasSuffix(".") {
             sanitized = String(sanitized.dropLast())
         }
-        // Limit length
-        if sanitized.count > 200 {
-            sanitized = String(sanitized.prefix(200))
+        // Limit length in UTF-8 bytes (filesystem limit is 255 bytes per
+        // component). Trim whole Characters so we never split a grapheme.
+        if sanitized.utf8.count > maxTitleBytes {
+            var trimmed = ""
+            var bytes = 0
+            for ch in sanitized {
+                let n = ch.utf8.count
+                if bytes + n > maxTitleBytes { break }
+                bytes += n
+                trimmed.append(ch)
+            }
+            sanitized = trimmed
+            // Truncation may leave a trailing dot/space/dash; re-trim.
+            sanitized = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
+            while let last = sanitized.last, last == "." || last == "-" {
+                sanitized.removeLast()
+            }
         }
         // Handle empty result
         if sanitized.isEmpty {

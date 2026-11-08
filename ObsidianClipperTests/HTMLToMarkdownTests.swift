@@ -741,4 +741,95 @@ final class HTMLToMarkdownTests: XCTestCase {
         XCTAssertFalse(md.contains("Related article one"),
                        "Related-articles grid should not win over the article body: \(md)")
     }
+
+    // MARK: - truncateUTF8
+
+    private func assertValidTruncation(_ input: String, maxBytes: Int, file: StaticString = #filePath, line: UInt = #line) {
+        let out = HTMLToMarkdown.truncateUTF8(input, maxBytes: maxBytes)
+        XCTAssertLessThanOrEqual(out.utf8.count, maxBytes, file: file, line: line)
+        XCTAssertTrue(input.utf8.starts(with: out.utf8), "Result must be a byte prefix of the input", file: file, line: line)
+        XCTAssertFalse(out.unicodeScalars.contains("\u{FFFD}"), file: file, line: line)
+    }
+
+    func testTruncateUTF8ShortStringUnchanged() {
+        XCTAssertEqual(HTMLToMarkdown.truncateUTF8("hello", maxBytes: 10), "hello")
+        XCTAssertEqual(HTMLToMarkdown.truncateUTF8("hello", maxBytes: 5), "hello")
+        XCTAssertEqual(HTMLToMarkdown.truncateUTF8("hello", maxBytes: 0), "")
+    }
+
+    func testTruncateUTF8CJKCutMidCharacter() {
+        let cjk = "日本語テキスト" // 3 bytes per character
+        for max in 1...cjk.utf8.count {
+            assertValidTruncation(cjk, maxBytes: max)
+        }
+        // 4 bytes lands one byte into the second character -> keep only the first.
+        XCTAssertEqual(HTMLToMarkdown.truncateUTF8(cjk, maxBytes: 4), "日")
+        XCTAssertEqual(HTMLToMarkdown.truncateUTF8(cjk, maxBytes: 2), "")
+    }
+
+    func testTruncateUTF8EmojiCutMidCharacter() {
+        let emoji = "a😀b👨‍👩‍👧c" // 4-byte scalars and ZWJ sequences
+        for max in 1...emoji.utf8.count {
+            assertValidTruncation(emoji, maxBytes: max)
+        }
+        XCTAssertEqual(HTMLToMarkdown.truncateUTF8(emoji, maxBytes: 3), "a")
+        XCTAssertEqual(HTMLToMarkdown.truncateUTF8(emoji, maxBytes: 5), "a😀")
+    }
+
+    func testConvertLargeCJKDocumentStaysBounded() {
+        // > 2 MB of 3-byte characters with a byte cut that lands mid-character
+        // (the old code fell back to the *untruncated* HTML in that case).
+        let para = "<p>" + String(repeating: "東京は日本の首都です。", count: 200) + "</p>\n"
+        var html = "<html><body>x"   // 1-byte offset shifts the 2 MB cut mid-character
+        while html.utf8.count < HTMLToMarkdown.maxHTMLSize + 512 * 1024 { html += para }
+        XCTAssertGreaterThan(html.utf8.count, HTMLToMarkdown.maxHTMLSize)
+
+        let md = HTMLToMarkdown.convert(html)
+        XCTAssertFalse(md.isEmpty)
+        XCTAssertLessThanOrEqual(md.utf8.count, HTMLToMarkdown.maxHTMLSize)
+        XCTAssertTrue(md.contains("東京"))
+    }
+
+    // MARK: - Deep nesting
+
+    func testConvertDeeplyNestedDivsDoesNotCrash() {
+        let depth = 5_000
+        let html = String(repeating: "<div>", count: depth) + "deep text"
+            + String(repeating: "</div>", count: depth) + "<p>after</p>"
+        let md = HTMLToMarkdown.convert(html)
+        XCTAssertTrue(md.contains("after"))
+    }
+
+    func testConvertNodeDeepTreeDoesNotCrash() {
+        let depth = 5_000
+        let html = "<html><body>" + String(repeating: "<div>", count: depth) + "deep text"
+            + String(repeating: "</div>", count: depth) + "</body></html>"
+        guard let root = SwiftSoupAdapter.parse(html: html) else {
+            return XCTFail("SwiftSoup parse failed")
+        }
+        _ = HTMLToMarkdown.convert(node: root)
+        _ = root.textContent
+        _ = root.serialize()
+    }
+
+    // MARK: - Overlapping marker replacements
+
+    func testOverlappingImgAndSourceMatchesDoNotCrash() {
+        // The <img> regex stops at the first '>' (inside alt), and the
+        // <source> regex matches inside that same span -> overlapping ranges.
+        let html = #"<p>Intro</p><img src="https://example.com/a.png" alt="<source src='https://example.com/b.png'>"><p>Tail</p>"#
+        let result = HTMLToMarkdown.replaceImgTagsWithMarkers(html, baseURL: URL(string: "https://example.com/"))
+        XCTAssertTrue(result.html.contains("[[IMG:0]]"))
+        XCTAssertFalse(result.html.contains("<img"))
+        XCTAssertTrue(result.html.hasPrefix("<p>Intro</p>"))
+        XCTAssertTrue(result.html.contains("<p>Tail</p>"))
+        XCTAssertEqual(result.markerMap[0]?.absoluteString, "https://example.com/a.png")
+    }
+
+    func testOverlappingSourceInsideImgSrcsetDoesNotCrash() {
+        let html = #"<picture><img data-x="<source srcset='https://example.com/b.webp 2x'>" src="https://example.com/a.png"><source srcset="https://example.com/c.webp"></picture>"#
+        let result = HTMLToMarkdown.replaceImgTagsWithMarkers(html, baseURL: nil)
+        XCTAssertFalse(result.html.contains("<img"))
+        XCTAssertTrue(result.html.contains("[[IMG:0]]"))
+    }
 }

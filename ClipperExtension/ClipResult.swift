@@ -82,13 +82,16 @@ struct ClipResult: Sendable {
         }
 
         // Append OCR text blocks for images that had recognized text
-        let ocrImages = images.filter { $0.ocrText != nil && !$0.ocrText!.isEmpty }
+        let ocrImages = images.compactMap { img -> (filename: String, text: String)? in
+            guard let text = img.ocrText, !text.isEmpty else { return nil }
+            return (img.filename, text)
+        }
         if !ocrImages.isEmpty {
             parts.append("\n---\n")
             parts.append("## Extracted Text (OCR)\n")
             for img in ocrImages {
                 parts.append("### \(img.filename)\n")
-                parts.append("> \(img.ocrText!.replacingOccurrences(of: "\n", with: "\n> "))\n")
+                parts.append("> \(img.text.replacingOccurrences(of: "\n", with: "\n> "))\n")
             }
         }
 

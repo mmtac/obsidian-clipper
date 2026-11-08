@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import os
 
 /// Persistence seam for site-login cookies. The main app writes cookies
 /// harvested from its in-app login WKWebView; the share extension reads them
@@ -15,8 +16,8 @@ protocol CookieStoring: Sendable {
 
 extension CookieStoring {
 
-    /// Cookies applicable to `url`: domain- and path-matched, unexpired, and
-    /// secure-flag compatible with the URL's scheme.
+    /// Cookies applicable to `url`: https only, domain- and path-matched,
+    /// and unexpired. Never attached to plaintext http.
     func cookies(for url: URL) -> [HTTPCookie] {
         SiteCookies.applicable(SiteCookies.prunedExpired(loadAll()), to: url)
     }
@@ -68,14 +69,14 @@ enum SiteCookies {
         domainMatches(cookieDomain: suffix, host: host)
     }
 
-    /// Filter to cookies applicable to `url` (domain, path, secure flag).
+    /// Filter to cookies applicable to `url` (domain, path). Stored cookies
+    /// are login credentials, so nothing — Secure flag or not — is ever
+    /// returned for a non-https URL.
     static func applicable(_ cookies: [HTTPCookie], to url: URL) -> [HTTPCookie] {
-        guard let host = url.host else { return [] }
-        let isHTTPS = url.scheme?.lowercased() == "https"
+        guard let host = url.host, url.scheme?.lowercased() == "https" else { return [] }
         let path = url.path.isEmpty ? "/" : url.path
         return cookies.filter { cookie in
             guard domainMatches(cookieDomain: cookie.domain, host: host) else { return false }
-            if cookie.isSecure && !isHTTPS { return false }
             let cookiePath = cookie.path.isEmpty ? "/" : cookie.path
             return path.hasPrefix(cookiePath)
         }
@@ -88,6 +89,17 @@ enum SiteCookies {
         cookies.filter { cookie in
             guard let expires = cookie.expiresDate else { return true }
             return expires > now
+        }
+    }
+
+    /// Keep only `new` cookies whose domain equals or is a subdomain of a
+    /// site already present in `stored` — Set-Cookie headers from a redirect
+    /// target can't introduce cookies for an unrelated site.
+    static func restrictedToStoredSites(_ new: [HTTPCookie], stored: [HTTPCookie]) -> [HTTPCookie] {
+        let sites = Set(stored.map { normalizedDomain($0.domain).lowercased() })
+        return new.filter { cookie in
+            let domain = normalizedDomain(cookie.domain)
+            return sites.contains { hostMatchesSuffix(host: domain, suffix: $0) }
         }
     }
 
@@ -161,15 +173,19 @@ enum SiteCookies {
 
 /// Keychain-backed store shared between the app and the extension via the
 /// App Group keychain access group. Session cookies are credentials, so they
-/// live in the Keychain (`kSecAttrAccessibleAfterFirstUnlock`), never in the
-/// plaintext App Group UserDefaults plist.
+/// live in the Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` —
+/// never synced or restored to another device), never in the plaintext App
+/// Group UserDefaults plist.
 final class KeychainCookieStore: CookieStoring, @unchecked Sendable {
 
     static let shared = KeychainCookieStore()
 
-    private let service = "com.obsidian.clipper.site-cookies"
+    private let service = "com.mmtac.md-clipper.site-cookies"
     private let account = "all"
     private let accessGroup: String?
+    private let log = Logger(subsystem: "com.mmtac.md-clipper", category: "cookies")
+    private let migrationLock = NSLock()
+    private var didMigrateAccessibility = false
 
     /// `accessGroup` defaults to the App Group ID — the app-groups
     /// entitlement alone authorizes it as a keychain access group on iOS
@@ -186,17 +202,38 @@ final class KeychainCookieStore: CookieStoring, @unchecked Sendable {
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
         var result: AnyObject?
+        var withGroup = accessGroup != nil
         var status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecMissingEntitlement && accessGroup != nil {
+        if status == errSecMissingEntitlement && withGroup {
             // Simulator/test runners lack the access-group entitlement;
             // fall back to the default group so local dev still works.
+            log.notice("keychain access group unavailable on read; falling back to default group")
+            withGroup = false
             var fallback = baseQuery(withGroup: false)
             fallback[kSecReturnData as String] = true
             fallback[kSecMatchLimit as String] = kSecMatchLimitOne
             status = SecItemCopyMatching(fallback as CFDictionary, &result)
         }
         guard status == errSecSuccess, let data = result as? Data else { return [] }
+        migrateAccessibilityIfNeeded(withGroup: withGroup)
         return SiteCookies.deserialize(data)
+    }
+
+    /// Items written by earlier builds used `kSecAttrAccessibleAfterFirstUnlock`
+    /// (eligible for backup/migration to another device). Downgrade them to
+    /// `...ThisDeviceOnly` once per process; best-effort.
+    private func migrateAccessibilityIfNeeded(withGroup: Bool) {
+        migrationLock.lock()
+        let alreadyDone = didMigrateAccessibility
+        didMigrateAccessibility = true
+        migrationLock.unlock()
+        guard !alreadyDone else { return }
+
+        let update: [String: Any] = [kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        let status = SecItemUpdate(baseQuery(withGroup: withGroup) as CFDictionary, update as CFDictionary)
+        if status != errSecSuccess {
+            log.error("keychain accessibility migration failed: \(status)")
+        }
     }
 
     func saveAll(_ cookies: [HTTPCookie]) {
@@ -212,11 +249,14 @@ final class KeychainCookieStore: CookieStoring, @unchecked Sendable {
         if status == errSecItemNotFound {
             var add = query
             add[kSecValueData as String] = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             status = SecItemAdd(add as CFDictionary, nil)
         }
         if status == errSecMissingEntitlement && withGroup {
+            log.notice("keychain access group unavailable on write; falling back to default group")
             save(data: data, withGroup: false)
+        } else if status != errSecSuccess {
+            log.error("keychain save failed: \(status)")
         }
     }
 

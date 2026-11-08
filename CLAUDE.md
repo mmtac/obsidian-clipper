@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Obsidian Clipper is an iOS app + Share Extension that clips web pages to an Obsidian vault as clean Markdown notes with image extraction and OCR. It requires no Obsidian plugins — it writes `.md` files directly to the vault folder via iCloud Drive / Files.
+Markdown Clipper is an iOS app + Share Extension that clips web pages to an Obsidian vault as clean Markdown notes with image extraction and OCR. It requires no Obsidian plugins — it writes `.md` files directly to the vault folder via iCloud Drive / Files.
 
 ## Build & Test Commands
 
@@ -32,7 +32,7 @@ Open the project: `open ObsidianClipper.xcodeproj`
 
 - **ObsidianClipper** (main app) — SwiftUI settings UI and onboarding. No clipping logic lives here.
 - **ClipperExtension** (Share Extension) — all clipping logic. This is where the real work happens.
-- **Shared/** — `ClipperSettings` bridges both targets via App Group (`group.com.obsidian.clipper`) UserDefaults.
+- **Shared/** — `ClipperSettings` bridges both targets via App Group (`group.com.mmtac.md-clipper`) UserDefaults.
 
 **Clipping pipeline** (all in `ClipperExtension/`, orchestrated by `ShareViewController.performClipping()`):
 

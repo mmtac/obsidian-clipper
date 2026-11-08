@@ -45,7 +45,7 @@ struct ClipRecord: Codable, Identifiable, Sendable {
 
 enum ClipDiagnostics {
 
-    static let logger = Logger(subsystem: "com.obsidian.clipper", category: "pipeline")
+    static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "pipeline")
 
     /// Number of records kept in the ring buffer.
     private static let capacity = 20
@@ -59,7 +59,7 @@ enum ClipDiagnostics {
     /// Append a record, trimming to the last `capacity` entries. Failures are
     /// swallowed — diagnostics must never break a clip.
     static func record(_ record: ClipRecord) {
-        logger.notice("clip source=\(record.source.rawValue, privacy: .public) host=\(record.host ?? "-", privacy: .public) route=\(record.route, privacy: .public) htmlChars=\(record.htmlChars ?? 0) mdChars=\(record.markdownChars) outcome=\(record.outcome, privacy: .public) elapsedMs=\(record.elapsedMs)")
+        logger.notice("clip source=\(record.source.rawValue, privacy: .public) host=\(record.host ?? "-", privacy: .private) route=\(record.route, privacy: .public) htmlChars=\(record.htmlChars ?? 0) mdChars=\(record.markdownChars) outcome=\(record.outcome, privacy: .public) elapsedMs=\(record.elapsedMs)")
         guard let url = storeURL else { return }
         var records = recent()
         records.append(record)

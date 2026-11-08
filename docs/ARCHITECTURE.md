@@ -1,4 +1,4 @@
-# Obsidian Clipper — Architecture
+# Markdown Clipper — Architecture
 
 **Version:** 1.0 (shipped) · 1.1 hardening + extraction-quality work merged
 **Last updated:** 2026-05-07
@@ -8,7 +8,7 @@
 
 ## 1. System overview
 
-Obsidian Clipper is a two-target iOS application:
+Markdown Clipper is a two-target iOS application:
 
 ```
 ┌────────────────────────────────┐     ┌───────────────────────────────────┐
@@ -20,7 +20,7 @@ Obsidian Clipper is a two-target iOS application:
 └───────────────┬────────────────┘     └───────────────┬───────────────────┘
                 │                                      │
                 └────────────── App Group ─────────────┘
-                      group.com.obsidian.clipper
+                      group.com.mmtac.md-clipper
                       (shared UserDefaults,
                        security-scoped bookmark)
 
@@ -260,7 +260,7 @@ A class of extension failures is *Apple-managed* — the dynamic linker hangs, t
 `LaunchBeacon.emit` is the first statement of `viewDidLoad`. It writes:
 
 - `last_extension_launch` (ISO8601 timestamp) and `extension_launch_count` (incrementing int) into App Group `UserDefaults`.
-- An `os_log notice` under subsystem `com.obsidian.clipper.extension`, category `launch`, with the build number.
+- An `os_log notice` under subsystem `com.mmtac.md-clipper.extension`, category `launch`, with the build number.
 
 The Settings screen surfaces both values under "Diagnostics". A stale "Last extension launch" after a Safari share attempt is the diagnostic signal that the appex never reached user code. Idempotent and allocation-light so it can't itself cause a hang.
 
@@ -502,7 +502,7 @@ The main app scheme `ObsidianClipper.xcscheme` is checked in with a configured t
 
 ## 11. Glossary
 
-- **App Group** — iOS mechanism for sharing data (UserDefaults, files) between a main app and its extensions. Here: `group.com.obsidian.clipper`.
+- **App Group** — iOS mechanism for sharing data (UserDefaults, files) between a main app and its extensions. Here: `group.com.mmtac.md-clipper`.
 - **Security-scoped bookmark** — an opaque `Data` blob from `URL.bookmarkData()` that encodes file-system access permission granted by the user via the document picker. Must be re-resolved and bracketed by `startAccessingSecurityScopedResource` on each use.
 - **Readability** — Mozilla's open-source article-extraction algorithm. We ship an independent Swift reimplementation inspired by it, not a port. The scorer now runs on a SwiftSoup-parsed DOM via `SwiftSoupAdapter`.
 - **JSON-LD / Schema.org Article fast path** — `JSONLDExtractor.tryFastPath`. Pulls `<script type="application/ld+json">` blocks looking for `Article` / `NewsArticle` / `BlogPosting` (and `@graph`-wrapped variants), and uses the publisher's own `articleBody` when ≥ 500 chars. Skips Readability scoring entirely on hits; falls through unchanged on misses.

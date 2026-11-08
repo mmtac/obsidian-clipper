@@ -1,8 +1,10 @@
-# Obsidian Clipper
+# Markdown Clipper for Obsidian
 
 An iOS app + Share Extension that clips web pages, text, and images into your [Obsidian](https://obsidian.md) vault as clean Markdown notes — with image extraction and OCR. No Obsidian plugin required.
 
 > **Status:** v1.0 shipped, v1.1 hardening + extraction-quality work merged (JSON-LD fast path, SwiftSoup parser, OCR relevance filter, in-process harness tests). See [docs/PRD.md](docs/PRD.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture.
+
+> **Not affiliated with Obsidian.** Markdown Clipper for Obsidian is an independent app and is not affiliated with or endorsed by Obsidian or Dynalist Inc. "Obsidian" is used only to describe compatibility with Obsidian vaults.
 
 ---
 
@@ -17,6 +19,21 @@ An iOS app + Share Extension that clips web pages, text, and images into your [O
 - **OCR screenshots — when text is the subject.** Apple Vision (`VNRecognizeTextRequest`) extracts text from images and appends it as a blockquote. A coverage threshold drops OCR output when text is incidental (license plates, signage, name placards in a photo) so the OCR section doesn't fill with noise.
 - **Self-contained clips.** Each clip becomes a folder: `<Vault>/<Target>/<Article Title>/` with its own `images/` subfolder — move it in Obsidian and the images go with it.
 - **Privacy-first.** Everything runs on-device. No server, no analytics, no telemetry.
+
+---
+
+## Site Logins
+
+Some publishers (NYT, Wired, The Verge, or any site you add yourself) only serve the full article to signed-in subscribers. When you share a link from an app other than Safari, the extension has to re-fetch the page, and without your session it would get the paywalled version.
+
+**Site Logins** lets you sign in to those sites once, inside the app, using a standard in-app web view and your own subscription credentials:
+
+- The app never sees or stores your password — you type it directly into the publisher's own sign-in page.
+- After sign-in, only the site's session cookies are kept, in the iOS **Keychain on this device** (shared between the app and its Share Extension via the App Group access group; not synced to iCloud).
+- When the extension re-fetches a page, it attaches those cookies **only** to requests for the matching domain, and **only over HTTPS**.
+- Nothing is sent to the developer or any third party. You can log out of a site (deleting its cookies) at any time by swiping its row on the Site Logins screen.
+
+Sharing from Safari doesn't need Site Logins — `Action.js` already captures the page as you see it.
 
 ---
 
@@ -97,7 +114,7 @@ open ObsidianClipper.xcodeproj
 Both targets need the same App Group so settings flow between them:
 
 1. Select the **ObsidianClipper** target → Signing & Capabilities → + Capability → **App Groups**
-2. Add `group.com.obsidian.clipper`
+2. Add `group.com.mmtac.md-clipper`
 3. Repeat for the **ClipperExtension** target
 4. Update bundle identifiers to match your development team
 
@@ -113,7 +130,7 @@ It appears automatically. If it doesn't:
 
 1. Open any app → tap Share
 2. Scroll right in the Share Sheet → tap **More**
-3. Enable **Clip to Obsidian**
+3. Enable **MD Clipper**
 
 ---
 
@@ -121,7 +138,7 @@ It appears automatically. If it doesn't:
 
 The extension works from any iOS app with a Share button. What you get depends on what the source shares:
 
-| Source app | What's shared | What Obsidian Clipper does |
+| Source app | What's shared | What Markdown Clipper does |
 |---|---|---|
 | **Safari** | Full page DOM via JavaScript preprocessing | Readability extraction + Markdown + images + OCR |
 | **X/Twitter, Reddit, Mastodon, news apps** | URL | Fetches the page, extracts the article, saves Markdown |
@@ -321,10 +338,10 @@ Article body in clean Markdown with inline images...
 **Extension doesn't appear in the Share Sheet**
 - Make sure both targets build successfully.
 - On device: Settings → General → VPN & Device Management → trust your dev certificate.
-- Scroll right in the Share Sheet → More → enable **Clip to Obsidian**.
+- Scroll right in the Share Sheet → More → enable **MD Clipper**.
 
 **"No vault folder configured" error**
-- Open Obsidian Clipper; the onboarding banner walks you through picking a vault folder.
+- Open Markdown Clipper; the onboarding banner walks you through picking a vault folder.
 - If the vault status dot is red, the bookmark is stale — re-pick the folder.
 
 **Images not downloading**
@@ -337,7 +354,7 @@ Article body in clean Markdown with inline images...
 - Even when Vision recognizes text, results are dropped if the recognized text covers less than ~10% of the image area. This intentionally suppresses incidental text (signage, license plates, name placards) from filling the OCR appendix.
 
 **Settings shows "Last extension launch: Never"**
-- The share extension hasn't reached user code yet. If you've shared from Safari and this still says "Never", something is preventing the appex from starting (typically dynamic-link or signing). Check the unified system log filtered by subsystem `com.obsidian.clipper.extension`.
+- The share extension hasn't reached user code yet. If you've shared from Safari and this still says "Never", something is preventing the appex from starting (typically dynamic-link or signing). Check the unified system log filtered by subsystem `com.mmtac.md-clipper.extension`.
 
 **Content is garbled**
 - Charset detection tries Content-Type → `<meta charset>` → UTF-8 fallback.
@@ -355,6 +372,8 @@ Article body in clean Markdown with inline images...
 ## Documentation
 
 - [docs/PRD.md](docs/PRD.md) — Product requirements, user stories (BDD), success metrics, release history.
+- [docs/privacy.md](docs/privacy.md) — Privacy policy.
+- [docs/support.md](docs/support.md) — User setup and troubleshooting guide.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Pipeline, module responsibilities, concurrency model, memory strategy, security boundaries, key design decisions.
 - [eval/comparison.md](eval/comparison.md) — A/B/C extraction-spike comparison matrix, per-fixture timings, post-merge result.
 - [eval/recommendation.md](eval/recommendation.md) — Decision rationale for the B+C merge and the deferred Spike A.

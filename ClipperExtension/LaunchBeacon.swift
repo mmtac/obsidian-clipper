@@ -22,7 +22,7 @@ enum LaunchBeacon {
     }
 
     private static let log = Logger(
-        subsystem: "com.obsidian.clipper.extension",
+        subsystem: "com.mmtac.md-clipper.extension",
         category: "launch"
     )
 

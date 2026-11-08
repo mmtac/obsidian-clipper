@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import os
 
 // MARK: - Errors
 
@@ -23,7 +24,7 @@ enum ClipError: LocalizedError {
         case .cancelled:
             return "Clipping was cancelled."
         case .paywalled:
-            return "This looks like a paywall or login wall — only a preview was captured. Log in under Settings → Site Logins in the Obsidian Clipper app, or open the page in Safari and share from there."
+            return "This looks like a paywall or login wall — only a preview was captured. Log in under Settings → Site Logins in the Markdown Clipper app, or open the page in Safari and share from there."
         case .thinContent:
             return "Couldn't extract meaningful content from this page. Try opening it in Safari and sharing from there."
         }
@@ -46,8 +47,57 @@ enum ClipError: LocalizedError {
 /// `FakeExtensionContext` and ignore the closures — they care about the
 /// pipeline output (a `.md` file in the configured vault), not the
 /// progress UI.
+///
+/// Isolation: `run` orchestrates on the main actor (settings, share-sheet
+/// input, progress callbacks), but every CPU/IO-heavy stage — JSON-LD
+/// parsing, marker injection, Readability, Markdown conversion, the quality
+/// gate, and the vault write — runs off the main thread via `offMain`, one
+/// awaited hop per stage, with `Task.checkCancellation()` between stages.
 @MainActor
 enum ClippingPipeline {
+
+    private nonisolated static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "pipeline")
+
+    /// Cap on HTML handed to marker injection / Readability / conversion.
+    /// Bounds every parse path regardless of the share source.
+    nonisolated static let maxPipelineHTMLBytes = 1_536 * 1024 // 1.5 MB
+
+    /// Stack size for the worker threads that run parse/convert stages.
+    /// Secondary threads default to 512 KB; the recursive tree builders and
+    /// walkers are depth-capped at `HTMLNode.maxDepth`, and this headroom
+    /// keeps that cap comfortably safe (including SwiftSoup's own recursive
+    /// teardown of very deep DOMs).
+    private nonisolated static let workerStackSize = 16 * 1024 * 1024
+
+    /// Run `work` on a dedicated large-stack thread and await its result.
+    /// Cancellation is checked before and after: an in-flight stage runs to
+    /// completion (stages are bounded), then the next check throws.
+    nonisolated static func offMain<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try Task.checkCancellation()
+        let value: T = try await withCheckedThrowingContinuation { continuation in
+            let thread = Thread {
+                do {
+                    continuation.resume(returning: try work())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+            thread.stackSize = workerStackSize
+            thread.qualityOfService = .userInitiated
+            thread.name = "com.mmtac.md-clipper.pipeline"
+            thread.start()
+        }
+        try Task.checkCancellation()
+        return value
+    }
+
+    /// Output of the HTML → Markdown extraction stages.
+    private struct Extraction: Sendable {
+        var markdownBody: String
+        var markerMap: [Int: URL]
+        var route: String
+        var title: String?
+    }
 
     /// Run the full extraction → markdown → save flow.
     ///
@@ -111,65 +161,13 @@ enum ClippingPipeline {
             markdownBody = ""
             extractionRoute = "imageOnly"
         } else if let html = rawContent.html {
-            // Scope a `do` block so the large intermediate HTML string
-            // (markedHTML) is released before image processing begins.
-            do {
-                if let ld = JSONLDExtractor.tryFastPath(html: html) {
-                    NSLog("[Clipper.pipeline] JSON-LD fast path HIT; isHTML=%d body_len=%d title_len=%d imageURLs=%d",
-                          ld.articleBodyIsHTML ? 1 : 0, ld.articleBody.count, ld.title.count, ld.imageURLs.count)
-                    onState?("Extracting article…")
-                    // Build body HTML. For plain-text bodies (Wired, NYT)
-                    // the prose has no <img> markup; prepend the JSON-LD
-                    // `image` field as a real <img> tag so the same
-                    // marker-injection pipeline picks it up. HTML bodies
-                    // already carry their own inline imagery.
-                    let bodyHTML: String
-                    if ld.articleBodyIsHTML {
-                        bodyHTML = ld.articleBody
-                    } else {
-                        let leadImageHTML = Self.leadImageHTML(from: ld.imageURLs)
-                        bodyHTML = leadImageHTML + Self.wrapPlainTextAsHTML(ld.articleBody)
-                    }
-                    let markerResult = HTMLToMarkdown.replaceImgTagsWithMarkers(bodyHTML, baseURL: rawContent.url)
-                    markerMap = markerResult.markerMap
-                    markdownBody = HTMLToMarkdown.convert(markerResult.html)
-                    NSLog("[Clipper.pipeline] JSON-LD path: markerMap=%d markdown_len=%d",
-                          markerMap.count, markdownBody.count)
-                    if !ld.title.isEmpty {
-                        articleTitle = ld.title
-                    }
-                    extractionRoute = "jsonld"
-                    try Task.checkCancellation()
-                } else {
-                    NSLog("[Clipper.pipeline] JSON-LD fast path MISS; falling through to Readability")
-                    let markerResult = HTMLToMarkdown.replaceImgTagsWithMarkers(html, baseURL: rawContent.url)
-                    markerMap = markerResult.markerMap
-                    let markedHTML = markerResult.html
-
-                    try Task.checkCancellation()
-
-                    onState?("Extracting article…")
-                    let readabilityResult = ReadabilityExtractor.extract(html: markedHTML, url: rawContent.url)
-
-                    if let result = readabilityResult {
-                        let candidateMarkdown = HTMLToMarkdown.convert(node: result.articleNode)
-                        if candidateMarkdown.filter({ !$0.isWhitespace }).count >= 100 {
-                            markdownBody = candidateMarkdown
-                            extractionRoute = "readability"
-                            if let extractedTitle = result.title, !extractedTitle.isEmpty {
-                                articleTitle = extractedTitle
-                            }
-                        } else {
-                            markdownBody = HTMLToMarkdown.convert(markedHTML)
-                            extractionRoute = "fullPage"
-                        }
-                    } else {
-                        markdownBody = HTMLToMarkdown.convert(markedHTML)
-                        extractionRoute = "fullPage"
-                    }
-
-                    try Task.checkCancellation()
-                }
+            onState?("Extracting article…")
+            let extraction = try await extractMarkdown(html: html, baseURL: rawContent.url)
+            markdownBody = extraction.markdownBody
+            markerMap = extraction.markerMap
+            extractionRoute = extraction.route
+            if let title = extraction.title, !title.isEmpty {
+                articleTitle = title
             }
         } else if let plain = rawContent.plainText {
             onState?("Saving text…")
@@ -190,7 +188,9 @@ enum ClippingPipeline {
            rawContent.url != nil,
            !rawContent.urlFromPlainText,
            let html = rawContent.html {
-            switch ContentQualityGate.evaluate(markdown: markdownBody, html: html) {
+            let body = markdownBody
+            let verdict = try await offMain { ContentQualityGate.evaluate(markdown: body, html: html) }
+            switch verdict {
             case .pass:
                 break
             case .paywalled:
@@ -220,8 +220,7 @@ enum ClippingPipeline {
             let surviving = HTMLToMarkdown.findMarkerIndices(in: markdownBody)
             let filteredMarkerMap = markerMap.filter { surviving.contains($0.key) }
             let limitedURLs = Array(filteredMarkerMap.values.prefix(20))
-            NSLog("[Clipper.pipeline] image-block: markerMap=%d surviving=%d filtered=%d limited(<=20)=%d",
-                  markerMap.count, surviving.count, filteredMarkerMap.count, limitedURLs.count)
+            logger.debug("image-block: markerMap=\(markerMap.count, privacy: .public) surviving=\(surviving.count, privacy: .public) filtered=\(filteredMarkerMap.count, privacy: .public) limited(<=20)=\(limitedURLs.count, privacy: .public)")
 
             let processor = ImageProcessor()
             onImageProcessor?(processor)
@@ -238,14 +237,13 @@ enum ClippingPipeline {
                     markerToPath[index] = path
                 }
             }
-            NSLog("[Clipper.pipeline] image-block: downloaded=%d urlToPath=%d markerToPath=%d",
-                  images.count, urlToPath.count, markerToPath.count)
+            logger.debug("image-block: downloaded=\(images.count, privacy: .public) urlToPath=\(urlToPath.count, privacy: .public) markerToPath=\(markerToPath.count, privacy: .public)")
             let inlineResult = HTMLToMarkdown.replaceMarkersWithImages(markdownBody, markerToPath: markerToPath)
             markdownBody = inlineResult.markdown
         } else if settings.saveImages {
-            NSLog("[Clipper.pipeline] image-block: SKIPPED (saveImages=true but no html)")
+            logger.debug("image-block: SKIPPED (saveImages=true but no html)")
         } else {
-            NSLog("[Clipper.pipeline] image-block: SKIPPED (saveImages=false)")
+            logger.debug("image-block: SKIPPED (saveImages=false)")
         }
 
         try Task.checkCancellation()
@@ -259,7 +257,10 @@ enum ClippingPipeline {
         )
 
         onState?("Saving to vault…")
-        try FileSaver.save(clipResult, config: saveConfig)
+        // Last cancellation point: once the write starts it runs to
+        // completion so a cancel can't leave a half-written note.
+        try Task.checkCancellation()
+        _ = try await offMain { try FileSaver.save(clipResult, config: saveConfig) }
 
         recordDiagnostics(rawContent, route: extractionRoute, markdownBody: markdownBody, outcome: "saved", since: clipStart)
 
@@ -267,7 +268,60 @@ enum ClippingPipeline {
         // `ImageProcessor` it received via `onImageProcessor`. Production
         // (`ShareViewController`) does this in `done()` / `cancel()`.
 
-        return rawContent.title
+        // Return the title the note was actually saved under (JSON-LD
+        // headline / Readability title may have replaced the share title).
+        return articleTitle
+    }
+
+    /// HTML → Markdown: JSON-LD fast path, else marker injection →
+    /// Readability → conversion (falling back to full-page conversion when
+    /// Readability yields too little). Each stage runs off the main actor.
+    private nonisolated static func extractMarkdown(html: String, baseURL: URL?) async throws -> Extraction {
+        if let ld = try await offMain({ JSONLDExtractor.tryFastPath(html: html) }) {
+            logger.debug("JSON-LD fast path HIT; isHTML=\(ld.articleBodyIsHTML, privacy: .public) body_len=\(ld.articleBody.count, privacy: .public) imageURLs=\(ld.imageURLs.count, privacy: .public)")
+            return try await offMain {
+                // Build body HTML. For plain-text bodies (Wired, NYT)
+                // the prose has no <img> markup; prepend the JSON-LD
+                // `image` field as a real <img> tag so the same
+                // marker-injection pipeline picks it up. HTML bodies
+                // already carry their own inline imagery.
+                let bodyHTML: String
+                if ld.articleBodyIsHTML {
+                    bodyHTML = ld.articleBody
+                } else {
+                    bodyHTML = leadImageHTML(from: ld.imageURLs) + wrapPlainTextAsHTML(ld.articleBody)
+                }
+                let bounded = HTMLToMarkdown.truncateUTF8(bodyHTML, maxBytes: maxPipelineHTMLBytes)
+                let markerResult = HTMLToMarkdown.replaceImgTagsWithMarkers(bounded, baseURL: baseURL)
+                let markdown = HTMLToMarkdown.convert(markerResult.html)
+                logger.debug("JSON-LD path: markerMap=\(markerResult.markerMap.count, privacy: .public) markdown_len=\(markdown.count, privacy: .public)")
+                return Extraction(
+                    markdownBody: markdown,
+                    markerMap: markerResult.markerMap,
+                    route: "jsonld",
+                    title: ld.title.isEmpty ? nil : ld.title
+                )
+            }
+        }
+
+        logger.debug("JSON-LD fast path MISS; falling through to Readability")
+        let markerResult = try await offMain {
+            let bounded = HTMLToMarkdown.truncateUTF8(html, maxBytes: maxPipelineHTMLBytes)
+            return HTMLToMarkdown.replaceImgTagsWithMarkers(bounded, baseURL: baseURL)
+        }
+        let markedHTML = markerResult.html
+
+        return try await offMain {
+            if let result = ReadabilityExtractor.extract(html: markedHTML, url: baseURL) {
+                let candidate = HTMLToMarkdown.convert(node: result.articleNode)
+                if candidate.filter({ !$0.isWhitespace }).count >= 100 {
+                    return Extraction(markdownBody: candidate, markerMap: markerResult.markerMap,
+                                      route: "readability", title: result.title)
+                }
+            }
+            return Extraction(markdownBody: HTMLToMarkdown.convert(markedHTML),
+                              markerMap: markerResult.markerMap, route: "fullPage", title: nil)
+        }
     }
 
     // MARK: - Helpers
@@ -303,7 +357,7 @@ enum ClippingPipeline {
     /// Wrap a JSON-LD plain-text `articleBody` in `<p>` tags so it flows
     /// through `HTMLToMarkdown.convert` cleanly. Splits on `\n\n` when
     /// available, falls back to single `\n` (Wired emits the latter).
-    private static func wrapPlainTextAsHTML(_ text: String) -> String {
+    private nonisolated static func wrapPlainTextAsHTML(_ text: String) -> String {
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
         let separator = normalized.contains("\n\n") ? "\n\n" : "\n"
         let escape: (String) -> String = { s in
@@ -324,7 +378,7 @@ enum ClippingPipeline {
     /// marker-injection pass picks it up exactly as if it had been
     /// inline. Cap at 1 — publishers commonly list the same hero at
     /// multiple aspect ratios; one inline reference is enough.
-    private static func leadImageHTML(from urls: [URL]) -> String {
+    private nonisolated static func leadImageHTML(from urls: [URL]) -> String {
         guard let lead = urls.first else { return "" }
         let escaped = lead.absoluteString
             .replacingOccurrences(of: "&", with: "&amp;")

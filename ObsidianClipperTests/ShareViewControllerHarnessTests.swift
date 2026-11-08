@@ -146,6 +146,9 @@ final class ShareViewControllerHarnessTests: XCTestCase {
 
         // Find the .md file inside the article subfolder.
         let articleDir = articleSubfolders[0]
+        // The returned (success-screen) title must be the one the note was
+        // saved under, not the raw share-sheet title.
+        XCTAssertEqual(articleDir.lastPathComponent, FileSaver.sanitizeFilename(returnedTitle))
         let mdFiles = try FileManager.default
             .contentsOfDirectory(at: articleDir, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "md" }

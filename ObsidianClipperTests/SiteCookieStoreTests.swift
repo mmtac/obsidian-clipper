@@ -60,6 +60,26 @@ final class SiteCookieStoreTests: XCTestCase {
         XCTAssertEqual(store.cookies(for: URL(string: "https://www.nytimes.com/")!).count, 1)
     }
 
+    func testNonSecureCookieAlsoExcludedFromHTTPFetch() {
+        let store = InMemoryCookieStore([cookie(secure: false)])
+        XCTAssertTrue(store.cookies(for: URL(string: "http://www.nytimes.com/")!).isEmpty,
+                      "Stored login cookies must never be sent over plaintext http")
+        XCTAssertEqual(store.cookies(for: URL(string: "https://www.nytimes.com/")!).count, 1)
+    }
+
+    func testRestrictedToStoredSitesDropsForeignDomains() {
+        let stored = [cookie(domain: ".nytimes.com")]
+        let incoming = [
+            cookie(name: "refresh", domain: ".nytimes.com"),
+            cookie(name: "sub", domain: "www.nytimes.com"),
+            cookie(name: "evil", domain: "evil.example"),
+            cookie(name: "lookalike", domain: "notnytimes.com"),
+        ]
+        let kept = SiteCookies.restrictedToStoredSites(incoming, stored: stored).map(\.name).sorted()
+        XCTAssertEqual(kept, ["refresh", "sub"])
+        XCTAssertTrue(SiteCookies.restrictedToStoredSites(incoming, stored: []).isEmpty)
+    }
+
     func testExpiredCookiePruned() {
         let store = InMemoryCookieStore([
             cookie(expires: Date(timeIntervalSinceNow: -3600)),

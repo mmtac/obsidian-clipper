@@ -103,6 +103,12 @@ final class HTMLNode: @unchecked Sendable {
         case text(String)
     }
 
+    /// Maximum element nesting depth any tree builder or recursive walker
+    /// descends to. Real pages rarely exceed ~50; adversarial or broken pages
+    /// can nest thousands deep and overflow the (small, secondary-thread)
+    /// stack. Builders silently flatten/stop past this; walkers stop descending.
+    static let maxDepth = 512
+
     var kind: Kind
     var children: [HTMLNode]
     weak var parent: HTMLNode?
@@ -137,11 +143,17 @@ final class HTMLNode: @unchecked Sendable {
     /// `invalidateTextContentCache()` on the mutated parent, which walks up the
     /// parent chain clearing caches so stale descendant sums never get returned.
     var textContent: String {
+        textContent(depth: 0)
+    }
+
+    private func textContent(depth: Int) -> String {
         if let cached = _cachedTextContent { return cached }
         let computed: String
         switch kind {
         case .text(let t): computed = t
-        case .element: computed = children.map(\.textContent).joined()
+        case .element:
+            guard depth < Self.maxDepth else { return "" }
+            computed = children.map { $0.textContent(depth: depth + 1) }.joined()
         }
         _cachedTextContent = computed
         return computed
@@ -159,12 +171,18 @@ final class HTMLNode: @unchecked Sendable {
 
     /// Serialize this node (and descendants) back to an HTML string.
     func serialize() -> String {
+        serialize(depth: 0)
+    }
+
+    private func serialize(depth: Int) -> String {
         switch kind {
         case .text(let t):
             return t
         case .element(let tag, let attrs):
             let attrStr = attrs.map { " \($0.name)=\"\(escapeAttribute($0.value))\"" }.joined()
-            let inner = children.map { $0.serialize() }.joined()
+            let inner = depth < Self.maxDepth
+                ? children.map { $0.serialize(depth: depth + 1) }.joined()
+                : ""
             if HTMLParser.selfClosingTags.contains(tag) {
                 return "<\(tag)\(attrStr) />"
             }
@@ -239,7 +257,7 @@ struct HTMLParser {
     mutating func parse() -> HTMLNode? {
         let children = parseNodes(until: nil)
         let root = HTMLNode(kind: .element(tag: "document", attributes: []), children: children)
-        setParents(root)
+        setParents(root, depth: 0)
         return root
     }
 
@@ -296,7 +314,7 @@ struct HTMLParser {
                     }
                     skipToAfter(UInt8(ascii: ">"))
                 } else {
-                    if let element = parseElement(parentClosingTag: closingTag) {
+                    if let element = parseElement(parentClosingTag: closingTag, depth: 1) {
                         nodes.append(element)
                     }
                 }
@@ -310,7 +328,10 @@ struct HTMLParser {
         return nodes
     }
 
-    private mutating func parseElement(parentClosingTag: String?) -> HTMLNode? {
+    /// `depth` is this element's nesting depth. Past `HTMLNode.maxDepth` the
+    /// element is emitted childless and its content is parsed as siblings by
+    /// the caller's loop (flattening), which bounds recursion.
+    private mutating func parseElement(parentClosingTag: String?, depth: Int) -> HTMLNode? {
         guard consume(UInt8(ascii: "<")) else { return nil }
 
         let tag = parseTagName()
@@ -337,12 +358,16 @@ struct HTMLParser {
             return HTMLNode(kind: .element(tag: tag, attributes: attrs), children: [textNode])
         }
 
+        guard depth < HTMLNode.maxDepth else {
+            return HTMLNode(kind: .element(tag: tag, attributes: attrs))
+        }
+
         // Parse children
-        let children = parseChildren(tag: tag, parentClosingTag: parentClosingTag)
+        let children = parseChildren(tag: tag, parentClosingTag: parentClosingTag, depth: depth)
         return HTMLNode(kind: .element(tag: tag, attributes: attrs), children: children)
     }
 
-    private mutating func parseChildren(tag: String, parentClosingTag: String?) -> [HTMLNode] {
+    private mutating func parseChildren(tag: String, parentClosingTag: String?, depth: Int) -> [HTMLNode] {
         var children: [HTMLNode] = []
 
         while offset < endOffset {
@@ -377,7 +402,7 @@ struct HTMLParser {
                     // Let the ancestor handle it.
                     break
                 } else {
-                    if let element = parseElement(parentClosingTag: tag) {
+                    if let element = parseElement(parentClosingTag: tag, depth: depth + 1) {
                         children.append(element)
                     }
                 }
@@ -677,10 +702,11 @@ struct HTMLParser {
         return String(decoding: bytes[start..<offset], as: UTF8.self)
     }
 
-    private func setParents(_ node: HTMLNode) {
+    private func setParents(_ node: HTMLNode, depth: Int) {
+        guard depth < HTMLNode.maxDepth else { return }
         for child in node.children {
             child.parent = node
-            setParents(child)
+            setParents(child, depth: depth + 1)
         }
     }
 }
