@@ -3,11 +3,9 @@ import SwiftUI
 /// External links shown in the About screen. Kept in one place so release
 /// URLs can be swapped without hunting through view code.
 enum AppLinks {
-    // TODO(release): replace with hosted URL
-    static let privacyPolicy = URL(string: "https://github.com/aerocristobal/obsidian-clipper/blob/main/docs/privacy.md")
-    // TODO(release): replace with hosted URL
-    static let support = URL(string: "https://github.com/aerocristobal/obsidian-clipper/blob/main/docs/support.md")
-    static let sourceCode = URL(string: "https://github.com/aerocristobal/obsidian-clipper")
+    static let privacyPolicy = URL(string: "https://mmtac.com/privacy")
+    static let support = URL(string: "https://mmtac.com/support")
+    static let sourceCode = URL(string: "https://github.com/mmtac/obsidian-clipper")
 }
 
 struct AboutView: View {

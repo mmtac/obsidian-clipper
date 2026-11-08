@@ -34,10 +34,13 @@ The Share Extension's Info.plist sets `NSAllowsArbitraryLoads = YES`. Justificat
 
 Optional feature for users who subscribe to paywalled publications (presets: NYT, Wired, The Verge; users can add their own site). The user opens the publisher's own sign-in page in an in-app `WKWebView` and signs in with **their own subscription credentials**. The app does not read or store passwords. After sign-in, only the site's session cookies are saved in the iOS Keychain on the device (App Group access group shared with the extension, not synced to iCloud). The extension sends them only to the matching domain over HTTPS when re-downloading a shared page. **Nothing is sent to the developer or any third party.** Users can log out of a site (deleting its cookies) by swiping its row.
 
+The sign-in browser is **not a general web browser**: its main frame is restricted to the site being signed into (plus that publisher's own sign-in domain, e.g. condenast.com for Wired). Links to any other site are blocked, so the app does not provide unrestricted web access.
+
 This does not bypass paywalls: it only lets the user's existing, paid session be used for pages they personally save, equivalent to sharing from Safari while signed in.
 
 ## Privacy
 
 - Privacy manifest included in both the app and the extension; no tracking, no collected data types.
 - App Privacy "nutrition label": **Data Not Collected**.
-- Privacy policy: see `docs/privacy.md` (hosted URL supplied in App Store Connect).
+- Privacy policy: https://mmtac.com/privacy
+- Support: https://mmtac.com/support (contact: dev@mmtac.com)

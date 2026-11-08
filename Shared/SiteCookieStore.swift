@@ -69,6 +69,18 @@ enum SiteCookies {
         domainMatches(cookieDomain: suffix, host: host)
     }
 
+    /// Whether the login browser may navigate its main frame to `url`.
+    /// The browser is confined to the site being signed into (and any
+    /// sign-in domains it uses), so it never acts as a general web browser.
+    static func isLoginNavigationAllowed(_ url: URL, allowedDomains: [String]) -> Bool {
+        if url.absoluteString == "about:blank" { return true }
+        guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let host = url.host, !host.isEmpty else {
+            return false
+        }
+        return allowedDomains.contains { hostMatchesSuffix(host: host, suffix: $0) }
+    }
+
     /// Filter to cookies applicable to `url` (domain, path). Stored cookies
     /// are login credentials, so nothing — Secure flag or not — is ever
     /// returned for a non-https URL.

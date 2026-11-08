@@ -18,6 +18,15 @@ struct LoginSite: Identifiable, Equatable, Codable {
     /// bare domain fail to parse, which the sheet reports instead of crashing.
     var loginURL: URL? { URL(string: loginURLString) ?? URL(string: "https://\(id)") }
 
+    /// Domains the login browser may open: the site itself plus the
+    /// sign-in service a preset publisher is known to redirect to.
+    var allowedDomains: [String] { [id] + (Self.signInDomains[id] ?? []) }
+
+    private static let signInDomains: [String: [String]] = [
+        "wired.com": ["condenast.com"],
+        "theverge.com": ["voxmedia.com"],
+    ]
+
     static let presets: [LoginSite] = [
         LoginSite(id: "nytimes.com", name: "The New York Times",
                   loginURLString: "https://myaccount.nytimes.com/auth/login", isPreset: true),
@@ -403,7 +412,7 @@ private struct SiteLoginSheet: View {
     private var content: some View {
         if let url = site.loginURL {
             ZStack {
-                LoginWebView(url: url, browser: browser)
+                LoginWebView(url: url, allowedDomains: site.allowedDomains, browser: browser)
                 if let error = browser.loadError {
                     ContentUnavailableView {
                         Label("Couldn't Load Page", systemImage: "wifi.exclamationmark")
@@ -463,7 +472,37 @@ private final class LoginBrowser: NSObject, WKNavigationDelegate {
 
     @ObservationIgnored weak var webView: WKWebView?
     @ObservationIgnored var initialURL: URL?
+    @ObservationIgnored var allowedDomains: [String] = []
     @ObservationIgnored private var failedURL: URL?
+
+    /// Keep the main frame on the site being signed into. Embedded frames
+    /// (captchas, sign-in widgets) are allowed; links to other sites are not.
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        if let frame = navigationAction.targetFrame, !frame.isMainFrame {
+            decisionHandler(.allow)
+            return
+        }
+        let allowed = SiteCookies.isLoginNavigationAllowed(url, allowedDomains: allowedDomains)
+        if navigationAction.targetFrame == nil {
+            // target=_blank / window.open: keep it in this view if allowed.
+            if allowed { webView.load(navigationAction.request) }
+            decisionHandler(.cancel)
+            return
+        }
+        if !allowed {
+            Self.logger.notice("Blocked login-browser navigation off-site")
+            loadError = "This sign-in browser only opens pages on \(allowedDomains.joined(separator: ", ")). Go back to continue signing in."
+        }
+        decisionHandler(allowed ? .allow : .cancel)
+    }
+
+    private static let logger = Logger(subsystem: "com.mmtac.md-clipper", category: "site-login")
 
     func goBack() {
         loadError = nil
@@ -527,6 +566,7 @@ private final class LoginBrowser: NSObject, WKNavigationDelegate {
 private struct LoginWebView: UIViewRepresentable {
 
     let url: URL
+    let allowedDomains: [String]
     let browser: LoginBrowser
 
     func makeUIView(context: Context) -> WKWebView {
@@ -537,6 +577,7 @@ private struct LoginWebView: UIViewRepresentable {
         webView.navigationDelegate = browser
         browser.webView = webView
         browser.initialURL = url
+        browser.allowedDomains = allowedDomains
         webView.load(URLRequest(url: url))
         return webView
     }

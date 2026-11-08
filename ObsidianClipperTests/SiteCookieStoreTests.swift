@@ -191,4 +191,27 @@ final class SiteCookieStoreTests: XCTestCase {
         XCTAssertEqual(bySName["nyt-a"]?.path, "/2026")
         XCTAssertEqual(bySName["nyt-a"]?.isSecure, true)
     }
+
+    // MARK: - Login browser navigation policy
+
+    func testLoginNavigationAllowsSiteAndSubdomains() {
+        let domains = ["nytimes.com"]
+        XCTAssertTrue(SiteCookies.isLoginNavigationAllowed(URL(string: "https://nytimes.com/")!, allowedDomains: domains))
+        XCTAssertTrue(SiteCookies.isLoginNavigationAllowed(URL(string: "https://myaccount.nytimes.com/auth/login")!, allowedDomains: domains))
+        XCTAssertTrue(SiteCookies.isLoginNavigationAllowed(URL(string: "about:blank")!, allowedDomains: domains))
+    }
+
+    func testLoginNavigationAllowsExtraSignInDomains() {
+        let domains = ["wired.com", "condenast.com"]
+        XCTAssertTrue(SiteCookies.isLoginNavigationAllowed(URL(string: "https://id.condenast.com/oidc")!, allowedDomains: domains))
+    }
+
+    func testLoginNavigationBlocksOtherSites() {
+        let domains = ["nytimes.com"]
+        XCTAssertFalse(SiteCookies.isLoginNavigationAllowed(URL(string: "https://www.google.com/search?q=x")!, allowedDomains: domains))
+        XCTAssertFalse(SiteCookies.isLoginNavigationAllowed(URL(string: "https://evilnytimes.com/")!, allowedDomains: domains))
+        XCTAssertFalse(SiteCookies.isLoginNavigationAllowed(URL(string: "https://nytimes.com.evil.example/")!, allowedDomains: domains))
+        XCTAssertFalse(SiteCookies.isLoginNavigationAllowed(URL(string: "javascript:alert(1)")!, allowedDomains: domains))
+        XCTAssertFalse(SiteCookies.isLoginNavigationAllowed(URL(string: "file:///etc/hosts")!, allowedDomains: domains))
+    }
 }
