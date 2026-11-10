@@ -143,7 +143,7 @@ enum HTMLToMarkdown {
                 // Collapse whitespace for normal text
                 let collapsed = collapseWhitespace(text)
                 if !collapsed.isEmpty {
-                    ctx.result += collapsed
+                    ctx.result += ctx.inCode ? collapsed : escapeInlineMarkdown(collapsed)
                 }
             }
 
@@ -202,7 +202,10 @@ enum HTMLToMarkdown {
                     renderChildren(node, to: &ctx)
                 } else {
                     ctx.result += "`"
+                    let wasInCode = ctx.inCode
+                    ctx.inCode = true
                     renderChildrenInline(node, to: &ctx)
+                    ctx.inCode = wasInCode
                     ctx.result += "`"
                 }
 
@@ -268,6 +271,12 @@ enum HTMLToMarkdown {
 
             case "li":
                 ctx.ensureNewline()
+                // Remember where this item starts so an item that renders to
+                // nothing (e.g. a "related story" card whose only content is
+                // a text-less link) can be rolled back instead of leaving a
+                // bare "- " bullet behind.
+                let itemStart = ctx.result.utf8.endIndex
+                let savedListStack = ctx.listStack
                 let indent = String(repeating: "  ", count: max(0, ctx.listStack.count - 1))
                 if let current = ctx.listStack.last {
                     switch current {
@@ -281,8 +290,14 @@ enum HTMLToMarkdown {
                         }
                     }
                 }
+                let contentStart = ctx.result.utf8.endIndex
                 renderChildrenInline(node, to: &ctx)
-                ctx.ensureNewline()
+                if ctx.result[contentStart...].allSatisfy(\.isWhitespace) {
+                    ctx.result.removeSubrange(itemStart...)
+                    ctx.listStack = savedListStack
+                } else {
+                    ctx.ensureNewline()
+                }
 
             case "table":
                 ctx.ensureBlankLine()
@@ -319,8 +334,10 @@ enum HTMLToMarkdown {
             case .text(let text):
                 if ctx.inPre {
                     ctx.result += text
-                } else {
+                } else if ctx.inCode {
                     ctx.result += collapseWhitespace(text)
+                } else {
+                    ctx.result += escapeInlineMarkdown(collapseWhitespace(text))
                 }
             case .element(let tag, _):
                 if blockTags.contains(tag) && !["br", "li"].contains(tag) {
@@ -390,6 +407,17 @@ enum HTMLToMarkdown {
             .replacingOccurrences(of: ")", with: "%29")
     }
 
+    /// Escape characters in running text that Markdown would read as
+    /// emphasis or code ("*sshole" would otherwise pair up with a later `*`).
+    /// `_` is left alone: intraword underscores never open emphasis, and
+    /// escaping them mangles identifiers and URLs.
+    private static func escapeInlineMarkdown(_ text: String) -> String {
+        guard text.contains("*") || text.contains("`") else { return text }
+        return text
+            .replacingOccurrences(of: "*", with: "\\*")
+            .replacingOccurrences(of: "`", with: "\\`")
+    }
+
     /// Collapse runs of whitespace into a single space.
     private static func collapseWhitespace(_ text: String) -> String {
         var result = ""
@@ -442,6 +470,14 @@ enum HTMLToMarkdown {
         // then apply in reverse so NSRange offsets remain valid.
         var replacements: [(range: NSRange, marker: String)] = []
 
+        // A <picture> is ONE image offered at several sizes/formats: its
+        // <source> elements and <img> carry different URLs (e.g. ?width=600 /
+        // 1200 / 1800) for the same photo. Track picture extents and which
+        // ones already have a usable <img> so the <source> pass below doesn't
+        // turn one photo into several markers (and burn the image cap).
+        let pictureRanges: [NSRange] = Self.pictureRegex?.matches(in: html, range: fullRange).map(\.range) ?? []
+        var acceptedImgLocations: [Int] = []
+
         for match in matches {
             let imgTag = nsHTML.substring(with: match.range)
 
@@ -477,6 +513,7 @@ enum HTMLToMarkdown {
             else { continue }
 
             let urlStr = url.absoluteString
+            acceptedImgLocations.append(match.range.location)
 
             // If we've seen this URL before, reuse the existing marker index
             if let existingIndex = seen[urlStr] {
@@ -494,8 +531,18 @@ enum HTMLToMarkdown {
         // new marker when the URL isn't already covered by a sibling <img>.
         if let sourceRegex = Self.sourceTagRegex {
             let sourceMatches = sourceRegex.matches(in: html, range: fullRange)
+            let pictureHasImg = pictureRanges.map { range in
+                acceptedImgLocations.contains { NSLocationInRange($0, range) }
+            }
+            var pictureTookSource = [Bool](repeating: false, count: pictureRanges.count)
 
             for match in sourceMatches {
+                // Inside a <picture> that already has a usable <img>, or that
+                // already produced a marker from an earlier <source>, this
+                // <source> is just another size of the same image.
+                let pictureIndex = pictureRanges.firstIndex { NSLocationInRange(match.range.location, $0) }
+                if let pictureIndex, pictureHasImg[pictureIndex] || pictureTookSource[pictureIndex] { continue }
+
                 let sourceTag = nsHTML.substring(with: match.range)
 
                 let src = extractAttribute("srcset", from: sourceTag).flatMap(pickLargestFromSrcset)
@@ -534,6 +581,7 @@ enum HTMLToMarkdown {
                 markerMap[markerIndex] = url
                 replacements.append((range: match.range, marker: "[[IMG:\(markerIndex)]]"))
                 markerIndex += 1
+                if let pictureIndex { pictureTookSource[pictureIndex] = true }
             }
         } else {
             logger.error("replaceImgTagsWithMarkers() source regex unavailable; skipping <source> pass")
@@ -568,6 +616,9 @@ enum HTMLToMarkdown {
     /// and degrade gracefully instead of silently skipping image handling.
     private static let imgTagRegex: NSRegularExpression? = {
         try? NSRegularExpression(pattern: #"<img\s[^>]*>"#, options: [.caseInsensitive, .dotMatchesLineSeparators])
+    }()
+    private static let pictureRegex: NSRegularExpression? = {
+        try? NSRegularExpression(pattern: #"<picture\b[\s\S]*?</picture\s*>"#, options: [.caseInsensitive])
     }()
     private static let sourceTagRegex: NSRegularExpression? = {
         try? NSRegularExpression(pattern: #"<source\s[^>]*>"#, options: [.caseInsensitive, .dotMatchesLineSeparators])

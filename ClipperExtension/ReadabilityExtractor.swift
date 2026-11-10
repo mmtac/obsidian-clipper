@@ -52,9 +52,20 @@ enum ReadabilityExtractor {
         // score of a "list of cards" container can easily exceed the actual
         // article body -- see the Wired ArticlePageChunks layout, where body is
         // split into 4 BodyWrapper chunks and the sidebar recirc widget wins.
-        guard let winner = candidates.max(by: { c1, c2 in
-            effectiveScore(c1) < effectiveScore(c2)
-        }), winner.score > 0 else {
+        // Score each candidate once. (`max(by:)` with `effectiveScore` in the
+        // comparator re-walked every candidate's whole subtree on every
+        // comparison - about 2x the work, and the dominant cost on large
+        // pages.) Ties keep the first candidate, as `max(by:)` does.
+        var bestCandidate: CandidateScore?
+        var bestScore = -Double.infinity
+        for candidate in candidates {
+            let score = effectiveScore(candidate)
+            if bestCandidate == nil || bestScore < score {
+                bestCandidate = candidate
+                bestScore = score
+            }
+        }
+        guard let winner = bestCandidate, winner.score > 0 else {
             return nil
         }
 
@@ -85,6 +96,30 @@ enum ReadabilityExtractor {
             siteName: siteName
         )
     }
+
+    /// Number of characters that are not whitespace; identical to
+    /// `text.filter { !$0.isWhitespace }.count` without building the filtered
+    /// string, and with an ASCII fast path that skips the Unicode property
+    /// lookup (the hot spot when this runs over a whole page's text).
+    static func nonWhitespaceCount(_ text: String) -> Int {
+        var count = 0
+        for character in text {
+            if let ascii = character.asciiValue {
+                if ascii != 32 && !(9...13).contains(ascii) { count += 1 }
+            } else if !character.isWhitespace {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    /// Whether `node` is marked hidden (inline style, `aria-hidden`, `hidden`).
+    /// Exposed for `JSONLDRenderer`, which walks the same DOM.
+    static func isHiddenNode(_ node: HTMLNode) -> Bool { isHidden(node) }
+
+    /// Share of `node`'s text that sits inside links (0...1).
+    /// Exposed for `JSONLDRenderer`.
+    static func linkDensity(of node: HTMLNode) -> Double { computeLinkDensity(node) }
 }
 
 // MARK: - Lightweight DOM
@@ -1112,8 +1147,7 @@ private extension ReadabilityExtractor {
     }
 
     static func computeLinkDensity(_ element: HTMLNode) -> Double {
-        let totalText = element.textContent
-        let totalLen = Double(totalText.filter { !$0.isWhitespace }.count)
+        let totalLen = Double(nonWhitespaceCount(element.textContent))
         guard totalLen > 0 else { return 0 }
 
         var linkLen: Double = 0
@@ -1124,8 +1158,7 @@ private extension ReadabilityExtractor {
 
     static func collectLinkText(_ node: HTMLNode, linkLen: inout Double) {
         if node.tag == "a" {
-            let text = node.textContent.filter { !$0.isWhitespace }
-            linkLen += Double(text.count)
+            linkLen += Double(nonWhitespaceCount(node.textContent))
             return // Don't recurse into links
         }
         for child in node.children {

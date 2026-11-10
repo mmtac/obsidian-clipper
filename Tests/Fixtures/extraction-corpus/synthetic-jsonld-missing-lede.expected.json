@@ -1,0 +1,14 @@
+{
+  "title_contains": "Novelist",
+  "must_contain": [
+    "Marlowe Quill spent a decade",
+    "](https://example.test/notebooks)",
+    "## A Question Of Provenance",
+    "keep answering questions"
+  ],
+  "must_not_contain": [
+    "Related card teaser",
+    "Footer text"
+  ],
+  "min_body_chars": 700
+}

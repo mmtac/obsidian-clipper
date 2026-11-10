@@ -280,24 +280,18 @@ enum ClippingPipeline {
         if let ld = try await offMain({ JSONLDExtractor.tryFastPath(html: html) }) {
             logger.debug("JSON-LD fast path HIT; isHTML=\(ld.articleBodyIsHTML, privacy: .public) body_len=\(ld.articleBody.count, privacy: .public) imageURLs=\(ld.imageURLs.count, privacy: .public)")
             return try await offMain {
-                // Build body HTML. For plain-text bodies (Wired, NYT)
-                // the prose has no <img> markup; prepend the JSON-LD
-                // `image` field as a real <img> tag so the same
-                // marker-injection pipeline picks it up. HTML bodies
-                // already carry their own inline imagery.
-                let bodyHTML: String
-                if ld.articleBodyIsHTML {
-                    bodyHTML = ld.articleBody
-                } else {
-                    bodyHTML = leadImageHTML(from: ld.imageURLs) + wrapPlainTextAsHTML(ld.articleBody)
-                }
-                let bounded = HTMLToMarkdown.truncateUTF8(bodyHTML, maxBytes: maxPipelineHTMLBytes)
-                let markerResult = HTMLToMarkdown.replaceImgTagsWithMarkers(bounded, baseURL: baseURL)
-                let markdown = HTMLToMarkdown.convert(markerResult.html)
-                logger.debug("JSON-LD path: markerMap=\(markerResult.markerMap.count, privacy: .public) markdown_len=\(markdown.count, privacy: .public)")
+                // JSON-LD decides which paragraphs are the article; for
+                // plain-text bodies the page DOM supplies links, subheads and
+                // any opening paragraph the structured data omits. HTML bodies
+                // pass straight through. The publisher-declared lead image is
+                // injected as a marker so the downloader treats it like any
+                // inline image.
+                let output = JSONLDRenderer.render(ld, pageHTML: html, baseURL: baseURL,
+                                                   maxBytes: maxPipelineHTMLBytes)
+                logger.debug("JSON-LD path: markerMap=\(output.markerMap.count, privacy: .public) markdown_len=\(output.markdown.count, privacy: .public)")
                 return Extraction(
-                    markdownBody: markdown,
-                    markerMap: markerResult.markerMap,
+                    markdownBody: output.markdown,
+                    markerMap: output.markerMap,
                     route: "jsonld",
                     title: ld.title.isEmpty ? nil : ld.title
                 )
@@ -315,11 +309,12 @@ enum ClippingPipeline {
             if let result = ReadabilityExtractor.extract(html: markedHTML, url: baseURL) {
                 let candidate = HTMLToMarkdown.convert(node: result.articleNode)
                 if candidate.filter({ !$0.isWhitespace }).count >= 100 {
-                    return Extraction(markdownBody: candidate, markerMap: markerResult.markerMap,
+                    return Extraction(markdownBody: MarkdownCleanup.trimBoilerplate(candidate),
+                                      markerMap: markerResult.markerMap,
                                       route: "readability", title: result.title)
                 }
             }
-            return Extraction(markdownBody: HTMLToMarkdown.convert(markedHTML),
+            return Extraction(markdownBody: MarkdownCleanup.trimBoilerplate(HTMLToMarkdown.convert(markedHTML)),
                               markerMap: markerResult.markerMap, route: "fullPage", title: nil)
         }
     }
@@ -352,37 +347,5 @@ enum ClippingPipeline {
         let seed = "\(title)|\(url?.absoluteString ?? "")|\(Date().timeIntervalSince1970)"
         let digest = SHA256.hash(data: Data(seed.utf8))
         return digest.prefix(4).map { String(format: "%02x", $0) }.joined()
-    }
-
-    /// Wrap a JSON-LD plain-text `articleBody` in `<p>` tags so it flows
-    /// through `HTMLToMarkdown.convert` cleanly. Splits on `\n\n` when
-    /// available, falls back to single `\n` (Wired emits the latter).
-    private nonisolated static func wrapPlainTextAsHTML(_ text: String) -> String {
-        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
-        let separator = normalized.contains("\n\n") ? "\n\n" : "\n"
-        let escape: (String) -> String = { s in
-            s.replacingOccurrences(of: "&", with: "&amp;")
-             .replacingOccurrences(of: "<", with: "&lt;")
-             .replacingOccurrences(of: ">", with: "&gt;")
-        }
-        return normalized
-            .components(separatedBy: separator)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .map { "<p>\(escape($0))</p>" }
-            .joined(separator: "\n")
-    }
-
-    /// Render the publisher-declared lead image (from JSON-LD `image`)
-    /// as a bare `<img>` tag for prepending to a plain-text body. The
-    /// marker-injection pass picks it up exactly as if it had been
-    /// inline. Cap at 1 — publishers commonly list the same hero at
-    /// multiple aspect ratios; one inline reference is enough.
-    private nonisolated static func leadImageHTML(from urls: [URL]) -> String {
-        guard let lead = urls.first else { return "" }
-        let escaped = lead.absoluteString
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
-        return "<img src=\"\(escaped)\">\n"
     }
 }

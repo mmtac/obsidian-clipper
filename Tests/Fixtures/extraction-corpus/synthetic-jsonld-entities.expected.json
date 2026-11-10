@@ -1,0 +1,12 @@
+{
+  "title_contains": "Entities",
+  "must_contain": [
+    "mushy peas",
+    "clear ending to assert on"
+  ],
+  "must_not_contain": [
+    "&nbsp;",
+    "&amp;"
+  ],
+  "min_body_chars": 400
+}

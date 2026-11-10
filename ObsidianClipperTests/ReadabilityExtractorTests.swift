@@ -834,4 +834,21 @@ final class ReadabilityExtractorTests: XCTestCase {
         XCTAssertTrue(root?.textContent.contains("deep text") ?? false)
         _ = root?.serialize()
     }
+
+    // MARK: - nonWhitespaceCount (performance helper must match the expression it replaced)
+
+    func testNonWhitespaceCountMatchesTheFilterExpression() {
+        let samples = [
+            "", " ", "abc", "a b\tc\nd\r\ne", "  leading and trailing  ",
+            "curly \u{2019}quotes\u{201D} and \u{00A0}nbsp\u{00A0}", "em\u{2003}space\u{2009}thin",
+            "caf\u{00E9} cafe\u{0301}", "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} family 🎉",
+            "日本語 のテキスト", "line1\u{2028}line2\u{2029}line3", "\u{0085}nel", "tab\u{000B}vt\u{000C}ff",
+            "\u{001F}unit sep stays non-whitespace?",
+        ]
+        for text in samples {
+            XCTAssertEqual(ReadabilityExtractor.nonWhitespaceCount(text),
+                           text.filter { !$0.isWhitespace }.count,
+                           "Mismatch for \(text.debugDescription)")
+        }
+    }
 }
