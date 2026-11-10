@@ -21,11 +21,13 @@ enum MarkdownCleanup {
     private static let chromePatterns: [NSRegularExpression] = [
         #"^listen\s*·\s*\d+:\d{2}\s*min$"#,
         #"^sign up for the .+ newsletter\.(\s.*)?$"#,
+        // Electrek/9to5-network sign-off: "Stay up to date with the latest content by subscribing to ...".
+        #"^stay up to date with the latest content by .*subscribing to .+"#,
     ].compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
 
     /// A heading that opens a trailing recirculation section.
     private static let tailHeading = try? NSRegularExpression(
-        pattern: #"^#{1,6}\s*(related(\s+(content|articles|stories|coverage))?|more\s+stories|recommended(\s+for\s+you)?)\s*:?\s*$"#,
+        pattern: #"^#{1,6}\s*(related(\s+(content|articles|stories|coverage))?|more\s+stories|recommended(\s+for\s+you)?|comments?(\s*\(\d+\))?)\s*:?\s*$"#,
         options: [.caseInsensitive]
     )
 
@@ -55,12 +57,38 @@ enum MarkdownCleanup {
         for (i, line) in lines.enumerated() {
             if isFence(line) { inFence.toggle(); continue }
             if inFence { continue }
-            guard isTailMarker(line) else { continue }
-            let tail = lines[(i + 1)...]
-            if tail.contains(where: { visibleLength($0) > proseLineThreshold }) { continue }
-            return Array(lines[..<i])
+            if isTailMarker(line) {
+                let tail = lines[(i + 1)...]
+                if tail.contains(where: { visibleLength($0) > proseLineThreshold }) { continue }
+                return Array(lines[..<i])
+            }
+            if isCardRunStart(lines, at: i) { return Array(lines[..<i]) }
         }
         return lines
+    }
+
+    /// Whether `lines[i...]` is a run of "related story" cards that reaches the
+    /// end of the document: a heading, then a link-only line carrying a
+    /// "Read more" link, repeated, with nothing else (no prose) in between.
+    /// Requiring "Read more" keeps an ordinary trailing heading + link list
+    /// (a references section) from being cut.
+    private static func isCardRunStart(_ lines: [String], at i: Int) -> Bool {
+        guard isHeading(lines[i]) else { return false }
+        var sawReadMore = false
+        var j = i
+        while j < lines.count {
+            let line = lines[j]
+            if line.trimmingCharacters(in: .whitespaces).isEmpty || isHeading(line) {
+                j += 1
+                continue
+            }
+            guard isLinkOnly(line) else { return false }
+            if line.range(of: #"\[\s*read more\s*\]\("#, options: [.regularExpression, .caseInsensitive]) != nil {
+                sawReadMore = true
+            }
+            j += 1
+        }
+        return sawReadMore
     }
 
     private static func dropChromeLines(_ lines: [String]) -> [String] {
@@ -106,6 +134,18 @@ enum MarkdownCleanup {
     }
 
     // MARK: - Matching
+
+    private static func isHeading(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces).range(of: #"^#{1,6}\s+\S"#, options: .regularExpression) != nil
+    }
+
+    /// A line made only of Markdown links (and whitespace): a card's category and "Read more" links.
+    private static func isLinkOnly(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("](") else { return false }
+        let withoutLinks = trimmed.replacingOccurrences(of: #"\[[^\]]*\]\([^)]*\)"#, with: "", options: .regularExpression)
+        return withoutLinks.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
     private static func isFence(_ line: String) -> Bool {
         line.trimmingCharacters(in: .whitespaces).hasPrefix("```")
