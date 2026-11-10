@@ -470,6 +470,14 @@ enum HTMLToMarkdown {
         // then apply in reverse so NSRange offsets remain valid.
         var replacements: [(range: NSRange, marker: String)] = []
 
+        // A <picture> is ONE image offered at several sizes/formats: its
+        // <source> elements and <img> carry different URLs (e.g. ?width=600 /
+        // 1200 / 1800) for the same photo. Track picture extents and which
+        // ones already have a usable <img> so the <source> pass below doesn't
+        // turn one photo into several markers (and burn the image cap).
+        let pictureRanges: [NSRange] = Self.pictureRegex?.matches(in: html, range: fullRange).map(\.range) ?? []
+        var acceptedImgLocations: [Int] = []
+
         for match in matches {
             let imgTag = nsHTML.substring(with: match.range)
 
@@ -505,6 +513,7 @@ enum HTMLToMarkdown {
             else { continue }
 
             let urlStr = url.absoluteString
+            acceptedImgLocations.append(match.range.location)
 
             // If we've seen this URL before, reuse the existing marker index
             if let existingIndex = seen[urlStr] {
@@ -522,8 +531,18 @@ enum HTMLToMarkdown {
         // new marker when the URL isn't already covered by a sibling <img>.
         if let sourceRegex = Self.sourceTagRegex {
             let sourceMatches = sourceRegex.matches(in: html, range: fullRange)
+            let pictureHasImg = pictureRanges.map { range in
+                acceptedImgLocations.contains { NSLocationInRange($0, range) }
+            }
+            var pictureTookSource = [Bool](repeating: false, count: pictureRanges.count)
 
             for match in sourceMatches {
+                // Inside a <picture> that already has a usable <img>, or that
+                // already produced a marker from an earlier <source>, this
+                // <source> is just another size of the same image.
+                let pictureIndex = pictureRanges.firstIndex { NSLocationInRange(match.range.location, $0) }
+                if let pictureIndex, pictureHasImg[pictureIndex] || pictureTookSource[pictureIndex] { continue }
+
                 let sourceTag = nsHTML.substring(with: match.range)
 
                 let src = extractAttribute("srcset", from: sourceTag).flatMap(pickLargestFromSrcset)
@@ -562,6 +581,7 @@ enum HTMLToMarkdown {
                 markerMap[markerIndex] = url
                 replacements.append((range: match.range, marker: "[[IMG:\(markerIndex)]]"))
                 markerIndex += 1
+                if let pictureIndex { pictureTookSource[pictureIndex] = true }
             }
         } else {
             logger.error("replaceImgTagsWithMarkers() source regex unavailable; skipping <source> pass")
@@ -596,6 +616,9 @@ enum HTMLToMarkdown {
     /// and degrade gracefully instead of silently skipping image handling.
     private static let imgTagRegex: NSRegularExpression? = {
         try? NSRegularExpression(pattern: #"<img\s[^>]*>"#, options: [.caseInsensitive, .dotMatchesLineSeparators])
+    }()
+    private static let pictureRegex: NSRegularExpression? = {
+        try? NSRegularExpression(pattern: #"<picture\b[\s\S]*?</picture\s*>"#, options: [.caseInsensitive])
     }()
     private static let sourceTagRegex: NSRegularExpression? = {
         try? NSRegularExpression(pattern: #"<source\s[^>]*>"#, options: [.caseInsensitive, .dotMatchesLineSeparators])

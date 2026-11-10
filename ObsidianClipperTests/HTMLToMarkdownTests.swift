@@ -855,4 +855,49 @@ final class HTMLToMarkdownTests: XCTestCase {
         let md = HTMLToMarkdown.convert("<ol><li>First</li><li></li><li>Second</li></ol>")
         XCTAssertEqual(md, "1. First\n2. Second")
     }
+
+    // MARK: - <picture> is one image, not one per size (NYT: 4 markers per photo)
+
+    private func sizedPicture(imgAttrs: String, id: String = "a") -> String {
+        """
+        <picture>
+        <source media="(max-width: 599px) and (min-resolution: 3dppx)" srcset="https://img.example.com/\(id).jpg?width=1800">
+        <source media="(max-width: 599px) and (min-resolution: 2dppx)" srcset="https://img.example.com/\(id).jpg?width=1200">
+        <source media="(max-width: 599px)" srcset="https://img.example.com/\(id).jpg?width=600">
+        <img alt="A photo" \(imgAttrs)>
+        </picture>
+        """
+    }
+
+    func testPictureWithSizedSourcesAndImgProducesOneMarker() {
+        let html = "<p>Text</p>" + sizedPicture(imgAttrs: "srcset=\"https://img.example.com/a.jpg?width=2000 2000w\"")
+        let result = HTMLToMarkdown.replaceImgTagsWithMarkers(html, baseURL: nil)
+        XCTAssertEqual(result.markerMap.count, 1, "One photo should be one marker: \(result.html)")
+        XCTAssertEqual(result.markerMap[0]?.absoluteString, "https://img.example.com/a.jpg?width=2000")
+        XCTAssertEqual(result.html.components(separatedBy: "[[IMG:").count - 1, 1)
+    }
+
+    func testPictureWithOnlySourcesProducesOneMarkerFromTheFirst() {
+        let html = sizedPicture(imgAttrs: "").replacingOccurrences(of: "<img alt=\"A photo\" >", with: "")
+        let result = HTMLToMarkdown.replaceImgTagsWithMarkers(html, baseURL: nil)
+        XCTAssertEqual(result.markerMap.count, 1)
+        XCTAssertEqual(result.markerMap[0]?.absoluteString, "https://img.example.com/a.jpg?width=1800")
+    }
+
+    func testLazyPlaceholderImgFallsBackToTheFirstSource() {
+        let html = sizedPicture(imgAttrs: "src=\"data:image/gif;base64,R0lGODlhAQABAAAAACw=\"")
+        let result = HTMLToMarkdown.replaceImgTagsWithMarkers(html, baseURL: nil)
+        XCTAssertEqual(result.markerMap.count, 1, "A placeholder <img> is unusable, so one <source> should be used")
+        XCTAssertEqual(result.markerMap[0]?.absoluteString, "https://img.example.com/a.jpg?width=1800")
+    }
+
+    func testSeparatePicturesKeepSeparateMarkers() {
+        let html = sizedPicture(imgAttrs: "src=\"https://img.example.com/a.jpg?width=2000\"", id: "a")
+            + "<p>Between</p>"
+            + sizedPicture(imgAttrs: "src=\"https://img.example.com/b.jpg?width=2000\"", id: "b")
+        let result = HTMLToMarkdown.replaceImgTagsWithMarkers(html, baseURL: nil)
+        XCTAssertEqual(result.markerMap.count, 2)
+        XCTAssertEqual(Set(result.markerMap.values.map(\.absoluteString)),
+                       ["https://img.example.com/a.jpg?width=2000", "https://img.example.com/b.jpg?width=2000"])
+    }
 }
