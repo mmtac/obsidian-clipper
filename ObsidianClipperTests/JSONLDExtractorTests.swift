@@ -200,4 +200,32 @@ final class JSONLDExtractorTests: XCTestCase {
         json.removeLast()
         return json
     }
+
+    // MARK: - Entities in plain-text bodies
+
+    func testPlainTextBodyEntitiesAreDecoded() throws {
+        let filler = String(repeating: "Padding sentence for length. ", count: 20)
+        let html = """
+        <script type="application/ld+json">
+        {"@type": "NewsArticle", "headline": "H", "articleBody": "Fish&nbsp;and chips &amp; peas. \(filler)"}
+        </script>
+        """
+        let result = try XCTUnwrap(JSONLDExtractor.tryFastPath(html: html))
+        XCTAssertFalse(result.articleBodyIsHTML)
+        XCTAssertFalse(result.articleBody.contains("&nbsp;"))
+        XCTAssertFalse(result.articleBody.contains("&amp;"))
+        XCTAssertTrue(result.articleBody.hasPrefix("Fish and chips & peas."))
+    }
+
+    func testHTMLBodyEntitiesAreLeftForTheParser() throws {
+        let filler = String(repeating: "Padding sentence for length. ", count: 20)
+        let html = """
+        <script type="application/ld+json">
+        {"@type": "NewsArticle", "headline": "H", "articleBody": "<p>Fish &amp; chips. \(filler)</p>"}
+        </script>
+        """
+        let result = try XCTUnwrap(JSONLDExtractor.tryFastPath(html: html))
+        XCTAssertTrue(result.articleBodyIsHTML)
+        XCTAssertTrue(result.articleBody.contains("&amp;"))
+    }
 }

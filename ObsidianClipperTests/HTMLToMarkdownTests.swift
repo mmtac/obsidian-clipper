@@ -832,4 +832,27 @@ final class HTMLToMarkdownTests: XCTestCase {
         XCTAssertFalse(result.html.contains("<img"))
         XCTAssertTrue(result.html.contains("[[IMG:0]]"))
     }
+
+    // MARK: - Literal asterisks, empty list items (conversion-quality fixes)
+
+    func testLiteralAsterisksInTextAreEscaped() {
+        let md = HTMLToMarkdown.convert("<p>The flaw, named *sshole, hit *sshole targets.</p>")
+        XCTAssertTrue(md.contains("\\*sshole"), "Expected escaped asterisk, got: \(md)")
+        XCTAssertFalse(md.contains(" *sshole"), "Bare asterisk left in text: \(md)")
+    }
+
+    func testAsterisksInsideCodeSpanAreNotEscaped() {
+        let md = HTMLToMarkdown.convert("<p>Run <code>a * b</code> now</p>")
+        XCTAssertTrue(md.contains("`a * b`"), "Code span should be verbatim, got: \(md)")
+    }
+
+    func testEmptyListItemsAreSkipped() {
+        let md = HTMLToMarkdown.convert("<ul><li><a href=\"https://example.test\"></a></li><li>Real item</li><li> </li></ul>")
+        XCTAssertEqual(md, "- Real item")
+    }
+
+    func testEmptyListItemDoesNotConsumeAnOrderedNumber() {
+        let md = HTMLToMarkdown.convert("<ol><li>First</li><li></li><li>Second</li></ol>")
+        XCTAssertEqual(md, "1. First\n2. Second")
+    }
 }

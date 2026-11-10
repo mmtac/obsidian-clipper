@@ -143,7 +143,7 @@ enum HTMLToMarkdown {
                 // Collapse whitespace for normal text
                 let collapsed = collapseWhitespace(text)
                 if !collapsed.isEmpty {
-                    ctx.result += collapsed
+                    ctx.result += ctx.inCode ? collapsed : escapeInlineMarkdown(collapsed)
                 }
             }
 
@@ -202,7 +202,10 @@ enum HTMLToMarkdown {
                     renderChildren(node, to: &ctx)
                 } else {
                     ctx.result += "`"
+                    let wasInCode = ctx.inCode
+                    ctx.inCode = true
                     renderChildrenInline(node, to: &ctx)
+                    ctx.inCode = wasInCode
                     ctx.result += "`"
                 }
 
@@ -268,6 +271,12 @@ enum HTMLToMarkdown {
 
             case "li":
                 ctx.ensureNewline()
+                // Remember where this item starts so an item that renders to
+                // nothing (e.g. a "related story" card whose only content is
+                // a text-less link) can be rolled back instead of leaving a
+                // bare "- " bullet behind.
+                let itemStart = ctx.result.utf8.endIndex
+                let savedListStack = ctx.listStack
                 let indent = String(repeating: "  ", count: max(0, ctx.listStack.count - 1))
                 if let current = ctx.listStack.last {
                     switch current {
@@ -281,8 +290,14 @@ enum HTMLToMarkdown {
                         }
                     }
                 }
+                let contentStart = ctx.result.utf8.endIndex
                 renderChildrenInline(node, to: &ctx)
-                ctx.ensureNewline()
+                if ctx.result[contentStart...].allSatisfy(\.isWhitespace) {
+                    ctx.result.removeSubrange(itemStart...)
+                    ctx.listStack = savedListStack
+                } else {
+                    ctx.ensureNewline()
+                }
 
             case "table":
                 ctx.ensureBlankLine()
@@ -319,8 +334,10 @@ enum HTMLToMarkdown {
             case .text(let text):
                 if ctx.inPre {
                     ctx.result += text
-                } else {
+                } else if ctx.inCode {
                     ctx.result += collapseWhitespace(text)
+                } else {
+                    ctx.result += escapeInlineMarkdown(collapseWhitespace(text))
                 }
             case .element(let tag, _):
                 if blockTags.contains(tag) && !["br", "li"].contains(tag) {
@@ -388,6 +405,17 @@ enum HTMLToMarkdown {
     private static func sanitizeLinkHref(_ href: String) -> String {
         href.replacingOccurrences(of: "(", with: "%28")
             .replacingOccurrences(of: ")", with: "%29")
+    }
+
+    /// Escape characters in running text that Markdown would read as
+    /// emphasis or code ("*sshole" would otherwise pair up with a later `*`).
+    /// `_` is left alone: intraword underscores never open emphasis, and
+    /// escaping them mangles identifiers and URLs.
+    private static func escapeInlineMarkdown(_ text: String) -> String {
+        guard text.contains("*") || text.contains("`") else { return text }
+        return text
+            .replacingOccurrences(of: "*", with: "\\*")
+            .replacingOccurrences(of: "`", with: "\\`")
     }
 
     /// Collapse runs of whitespace into a single space.

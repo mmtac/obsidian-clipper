@@ -49,6 +49,12 @@
 		A10000078 /* JSONLDExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000078 /* JSONLDExtractor.swift */; };
 		A10000087 /* JSONLDExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000078 /* JSONLDExtractor.swift */; };
 		A10000079 /* JSONLDExtractorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000079 /* JSONLDExtractorTests.swift */; };
+		A10000F01 /* JSONLDRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000F01 /* JSONLDRenderer.swift */; };
+		A10000F02 /* JSONLDRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000F01 /* JSONLDRenderer.swift */; };
+		A10000F03 /* MarkdownCleanup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000F02 /* MarkdownCleanup.swift */; };
+		A10000F04 /* MarkdownCleanup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000F02 /* MarkdownCleanup.swift */; };
+		A10000F05 /* JSONLDRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000F03 /* JSONLDRendererTests.swift */; };
+		A10000F06 /* MarkdownCleanupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000F04 /* MarkdownCleanupTests.swift */; };
 		A10000090 /* SwiftSoupAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000090 /* SwiftSoupAdapter.swift */; };
 		A10000091 /* SwiftSoupAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000090 /* SwiftSoupAdapter.swift */; };
 		A10000092 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = A91111002 /* SwiftSoup */; };
@@ -136,6 +142,10 @@
 		A2000007A /* WebContentExtractorIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebContentExtractorIntegrationTests.swift; sourceTree = "<group>"; };
 		A20000078 /* JSONLDExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLDExtractor.swift; sourceTree = "<group>"; };
 		A20000079 /* JSONLDExtractorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLDExtractorTests.swift; sourceTree = "<group>"; };
+		A20000F01 /* JSONLDRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLDRenderer.swift; sourceTree = "<group>"; };
+		A20000F02 /* MarkdownCleanup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownCleanup.swift; sourceTree = "<group>"; };
+		A20000F03 /* JSONLDRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLDRendererTests.swift; sourceTree = "<group>"; };
+		A20000F04 /* MarkdownCleanupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownCleanupTests.swift; sourceTree = "<group>"; };
 		A20000090 /* SwiftSoupAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftSoupAdapter.swift; sourceTree = "<group>"; };
 		A20000013 /* SiteLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteLoginView.swift; sourceTree = "<group>"; };
 		A20000014 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
@@ -192,6 +202,8 @@
 				A20000027 /* ClipResult.swift */,
 				A20000028 /* ReadabilityExtractor.swift */,
 				A20000078 /* JSONLDExtractor.swift */,
+				A20000F01 /* JSONLDRenderer.swift */,
+				A20000F02 /* MarkdownCleanup.swift */,
 				A20000090 /* SwiftSoupAdapter.swift */,
 				A20000031 /* ContentQualityGate.swift */,
 				A20000300 /* ClippingPipeline.swift */,
@@ -236,6 +248,8 @@
 				A20000076 /* EvalEntryPoint.swift */,
 				A20000077 /* ExtractionEvalTests.swift */,
 				A20000079 /* JSONLDExtractorTests.swift */,
+				A20000F03 /* JSONLDRendererTests.swift */,
+				A20000F04 /* MarkdownCleanupTests.swift */,
 				A20000200 /* PipelineRegressionTests.swift */,
 				A20000201 /* FakeExtensionContext.swift */,
 				A20000202 /* ShareViewControllerHarnessTests.swift */,
@@ -405,6 +419,8 @@
 				A10000027 /* ClipResult.swift in Sources */,
 				A10000028 /* ReadabilityExtractor.swift in Sources */,
 				A10000078 /* JSONLDExtractor.swift in Sources */,
+				A10000F01 /* JSONLDRenderer.swift in Sources */,
+				A10000F03 /* MarkdownCleanup.swift in Sources */,
 				A10000090 /* SwiftSoupAdapter.swift in Sources */,
 				A10000300 /* ClippingPipeline.swift in Sources */,
 				A10000029 /* LaunchBeacon.swift in Sources */,
@@ -438,8 +454,12 @@
 				A10000085 /* ClipResult.swift in Sources */,
 				A10000086 /* ReadabilityExtractor.swift in Sources */,
 				A10000087 /* JSONLDExtractor.swift in Sources */,
+				A10000F02 /* JSONLDRenderer.swift in Sources */,
+				A10000F04 /* MarkdownCleanup.swift in Sources */,
 				A10000301 /* ClippingPipeline.swift in Sources */,
 				A10000079 /* JSONLDExtractorTests.swift in Sources */,
+				A10000F05 /* JSONLDRendererTests.swift in Sources */,
+				A10000F06 /* MarkdownCleanupTests.swift in Sources */,
 				A10000091 /* SwiftSoupAdapter.swift in Sources */,
 				A10000088 /* ClipDiagnostics.swift in Sources */,
 				A10000089 /* SiteCookieStore.swift in Sources */,

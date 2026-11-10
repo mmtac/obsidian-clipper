@@ -85,6 +85,14 @@ enum ReadabilityExtractor {
             siteName: siteName
         )
     }
+
+    /// Whether `node` is marked hidden (inline style, `aria-hidden`, `hidden`).
+    /// Exposed for `JSONLDRenderer`, which walks the same DOM.
+    static func isHiddenNode(_ node: HTMLNode) -> Bool { isHidden(node) }
+
+    /// Share of `node`'s text that sits inside links (0...1).
+    /// Exposed for `JSONLDRenderer`.
+    static func linkDensity(of node: HTMLNode) -> Double { computeLinkDensity(node) }
 }
 
 // MARK: - Lightweight DOM

@@ -1,0 +1,14 @@
+{
+  "title_contains": "Linux Flaw",
+  "must_contain": [
+    "\\*sshole",
+    "Researchers expect exploitation to continue"
+  ],
+  "must_not_contain": [
+    "Share full article",
+    "Related Content",
+    "Loading comments",
+    "Sign up for the Security newsletter"
+  ],
+  "min_body_chars": 900
+}

@@ -102,9 +102,12 @@ enum JSONLDExtractor {
         let imageURLs = extractImageURLs(from: article["image"])
         logger.debug("tryFastPath() HIT; title_len=\(title.count, privacy: .public) body_len=\(trimmed.count, privacy: .public) isHTML=\(isHTML, privacy: .public) image=\(imageShape, privacy: .public) imageURLs=\(imageURLs.count, privacy: .public)")
 
+        // A plain-text body is never parsed as HTML downstream, so entities the
+        // publisher left in it ("&nbsp;", "&amp;") must be decoded here or the
+        // renderer's own escaping turns them into literal "&amp;nbsp;".
         return Result(
             title: decodeEntities(title),
-            articleBody: trimmed,
+            articleBody: isHTML ? trimmed : decodeEntities(trimmed),
             articleBodyIsHTML: isHTML,
             excerpt: excerpt.map(decodeEntities),
             siteName: siteName.map(decodeEntities),
