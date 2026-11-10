@@ -21,6 +21,9 @@ enum MarkdownCleanup {
     private static let chromePatterns: [NSRegularExpression] = [
         #"^listen\s*·\s*\d+:\d{2}\s*min$"#,
         #"^sign up for the .+ newsletter\.(\s.*)?$"#,
+        // NYT blurbs without the word "newsletter": "Sign up for Science Times Get stories that ...".
+        // Short standalone lines only, so ordinary prose starting "Sign up for" is left alone.
+        #"^sign up for .{1,90}\bget\b.{0,130}$"#,
         // Electrek/9to5-network sign-off: "Stay up to date with the latest content by subscribing to ...".
         #"^stay up to date with the latest content by .*subscribing to .+"#,
     ].compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }

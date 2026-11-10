@@ -132,4 +132,15 @@ final class MarkdownCleanupTests: XCTestCase {
         let md = "\(paragraph)\n\n## Comments\n\n\(prose)"
         XCTAssertTrue(MarkdownCleanup.trimBoilerplate(md).contains("## Comments"))
     }
+
+    func testSignUpBlurbWithoutTheWordNewsletterIsRemoved() {
+        let md = "Sign up for Science Times Get stories that capture the wonders of nature, the cosmos and the human body.\n\n\(paragraph)"
+        XCTAssertEqual(MarkdownCleanup.trimBoilerplate(md), paragraph)
+    }
+
+    func testProseThatMerelyStartsWithSignUpForIsKept() {
+        let prose = "Sign up for the clinical trial early, the researchers advised, because slots fill quickly and the study will run for several years across multiple sites in the region."
+        let md = "\(paragraph)\n\n\(prose)"
+        XCTAssertEqual(MarkdownCleanup.trimBoilerplate(md), md)
+    }
 }
