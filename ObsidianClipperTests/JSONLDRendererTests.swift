@@ -78,6 +78,47 @@ final class JSONLDRendererTests: XCTestCase {
         XCTAssertEqual(positions, positions.sorted())
     }
 
+    // MARK: - Scenario: a stray short match must not derail alignment
+
+    func testShortLineRecurringInAWidgetDoesNotDerailMatching() throws {
+        // Wired's JSON-LD includes "Got a Tip?" mid-body; the same words also sit in a
+        // widget after the article. A greedy matcher jumps to the widget and then can't
+        // find the remaining paragraphs, silently losing every link.
+        let paragraphs = [body[0], body[1], "Got a Tip?", body[2], body[3], body[4]]
+        let aside = "<aside><p>Got a Tip?</p></aside>"
+        let md = try render(page(jsonLDParagraphs: paragraphs, articleHTML: fullArticleHTML, aside: aside))
+        XCTAssertTrue(md.hasPrefix(lede), "Lede should still be recovered, got: \(md.prefix(160))")
+        XCTAssertTrue(md.contains("[a source](https://example.test/source)"), "Links lost to the stray match: \(md)")
+        XCTAssertTrue(md.contains("Got a Tip?"), "The JSON-LD line itself should still be kept")
+    }
+
+    func testShortLeadingLineMatchingNavChromeIsNotUsedAsTheAnchor() throws {
+        // A short first line that happens to match nav text must not make the lede
+        // recovery grab whatever sits before the nav item.
+        let paragraphs = ["Home", body[0], body[1], body[2], body[3], body[4]]
+        let nav = "<p>Navigation paragraph that is long enough to look like article prose but belongs to the site chrome.</p><p>Home</p>"
+        let md = try render(page(jsonLDParagraphs: paragraphs, articleHTML: nav + fullArticleHTML))
+        XCTAssertFalse(md.contains("Navigation paragraph"), "Chrome leaked in as a lede: \(md)")
+    }
+
+    // MARK: - Scenario: mixed paragraph separators
+
+    func testBodyThatMixesSingleAndDoubleNewlinesStillHydrates() throws {
+        // One Wired body uses "\n" between nearly every paragraph and "\n\n" once. Splitting
+        // only on the blank line glues most paragraphs together and nothing can match.
+        let json = try JSONSerialization.data(withJSONObject: [
+            "@context": "https://schema.org", "@type": "NewsArticle", "headline": "Mixed",
+            "articleBody": [body[0], body[1], body[2]].joined(separator: "\n") + "\n\n" + [body[3], body[4]].joined(separator: "\n"),
+        ])
+        let html = """
+        <html><head><script type="application/ld+json">\(String(data: json, encoding: .utf8)!)</script></head>
+        <body><article>\(fullArticleHTML)</article></body></html>
+        """
+        let md = try render(html)
+        XCTAssertTrue(md.contains("[a source](https://example.test/source)"), "Links lost: \(md)")
+        XCTAssertTrue(md.contains("\n\n\(body[3])"), "Paragraphs should stay separate: \(md)")
+    }
+
     // MARK: - Scenario: shell stays plain
 
     func testFallsBackToPlainParagraphsWhenThePageLacksTheBody() throws {

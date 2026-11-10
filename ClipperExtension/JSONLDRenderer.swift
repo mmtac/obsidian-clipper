@@ -28,6 +28,9 @@ enum JSONLDRenderer {
     /// Most opening paragraphs recovered from the DOM.
     private static let maxLedeParagraphs = 3
 
+    /// Shortest paragraph trusted to locate the article in the page.
+    private static let anchorMinLength = 40
+
     static func render(
         _ ld: JSONLDExtractor.Result,
         pageHTML: String,
@@ -45,11 +48,11 @@ enum JSONLDRenderer {
         let lead = HTMLToMarkdown.replaceImgTagsWithMarkers(leadImageHTML(from: ld.imageURLs), baseURL: baseURL)
         let leadMarkdown = HTMLToMarkdown.convert(lead.html)
 
-        let paragraphs = splitParagraphs(ld.articleBody)
+        let splits = candidateSplits(ld.articleBody)
         let blocks = hydratedBlocks(
-            paragraphs: paragraphs,
+            splits: splits,
             pageHTML: HTMLToMarkdown.truncateUTF8(pageHTML, maxBytes: maxBytes)
-        ) ?? [HTMLToMarkdown.convert(plainHTML(paragraphs))]
+        ) ?? [HTMLToMarkdown.convert(plainHTML(splitParagraphs(ld.articleBody)))]
 
         let markdown = ([leadMarkdown] + blocks)
             .filter { !$0.isEmpty }
@@ -66,8 +69,13 @@ enum JSONLDRenderer {
 
     /// One Markdown block per article paragraph (preceded by any recovered
     /// lede), or nil when the DOM can't be trusted to hold the article.
-    private static func hydratedBlocks(paragraphs: [String], pageHTML: String) -> [String]? {
-        guard !paragraphs.isEmpty,
+    ///
+    /// Publishers disagree about what separates paragraphs in `articleBody`
+    /// (one Wired body uses "\n" almost everywhere but "\n\n" once), so each
+    /// plausible split is aligned against the page and the one that accounts
+    /// for the most article text wins.
+    private static func hydratedBlocks(splits: [[String]], pageHTML: String) -> [String]? {
+        guard splits.contains(where: { !$0.isEmpty }),
               let document = SwiftSoupAdapter.parse(html: pageHTML)
         else { return nil }
 
@@ -75,24 +83,18 @@ enum JSONLDRenderer {
         collectCandidates(document, into: &candidates, depth: 0)
         guard !candidates.isEmpty else { return nil }
 
-        // Match each paragraph to a DOM block, moving forward through the
-        // document so duplicate copies earlier on the page can't be picked.
-        var cursor = 0
-        var matches: [Int?] = []
-        for paragraph in paragraphs {
-            let needle = normalize(paragraph)
-            var found: Int?
-            var i = cursor
-            while i < candidates.count {
-                if isMatch(candidates[i].text, needle) { found = i; break }
-                i += 1
+        var best: (paragraphs: [String], matches: [Int?], ratio: Double)?
+        for paragraphs in splits where !paragraphs.isEmpty {
+            let matches = alignParagraphs(paragraphs, to: candidates)
+            let total = paragraphs.reduce(0) { $0 + normalize($1).count }
+            let matchedChars = zip(paragraphs, matches).reduce(0) { sum, pair in
+                pair.1 == nil ? sum : sum + normalize(pair.0).count
             }
-            if let found { cursor = found + 1 }
-            matches.append(found)
+            let ratio = total == 0 ? 0 : Double(matchedChars) / Double(total)
+            if ratio > (best?.ratio ?? -1) { best = (paragraphs, matches, ratio) }  // ties keep the earlier split
         }
-
-        let matched = matches.compactMap { $0 }.count
-        guard Double(matched) / Double(paragraphs.count) >= minMatchRatio else { return nil }
+        guard let chosen = best, chosen.ratio >= minMatchRatio else { return nil }
+        let (paragraphs, matches) = (chosen.paragraphs, chosen.matches)
 
         var blocks: [String] = []
         if let firstIndex = matches.compactMap({ $0 }).first {
@@ -134,14 +136,64 @@ enum JSONLDRenderer {
         }
     }
 
-    private static func isMatch(_ domText: String, _ needle: String) -> Bool {
+    private static func isMatch(_ domText: String, _ needle: String, prefix: String) -> Bool {
         if domText == needle { return true }
         // The DOM block may carry a little extra text (a footnote marker, an
         // inline "Read more"). Accept a shared opening and comparable length.
-        let prefixLength = min(50, needle.count)
-        guard prefixLength >= 20, domText.hasPrefix(String(needle.prefix(prefixLength))) else { return false }
+        guard prefix.count >= 20, domText.hasPrefix(prefix) else { return false }
         let ratio = Double(domText.count) / Double(needle.count)
         return ratio >= 0.75 && ratio <= 1.33
+    }
+
+    /// Assign each paragraph to a DOM block so that the assignments are in
+    /// document order and cover as much text as possible. A greedy "first
+    /// match ahead" is not enough: a short line that recurs in a widget far
+    /// down the page ("Got a Tip?") would pull the cursor past the whole
+    /// article. Instead this finds the heaviest increasing sequence of
+    /// (paragraph, block) pairs, weighting by paragraph length, so a short
+    /// stray match can never outweigh the long paragraphs it would orphan.
+    private static func alignParagraphs(_ paragraphs: [String], to candidates: [Candidate]) -> [Int?] {
+        struct Pair { let paragraph: Int; let block: Int; let weight: Int; var best = 0; var previous: Int? }
+
+        var pairs: [Pair] = []
+        for (index, paragraph) in paragraphs.enumerated() {
+            let needle = normalize(paragraph)
+            let prefix = String(needle.prefix(50))
+            var taken = 0
+            for (block, candidate) in candidates.enumerated() where isMatch(candidate.text, needle, prefix: prefix) {
+                pairs.append(Pair(paragraph: index, block: block, weight: min(needle.count, 300)))
+                taken += 1
+                if taken == 8 { break }  // pathological repeats; the best-ordered few suffice
+            }
+        }
+        guard !pairs.isEmpty else { return Array(repeating: nil, count: paragraphs.count) }
+
+        for a in pairs.indices {
+            var bestBefore = 0
+            var previous: Int?
+            for b in 0..<a
+            where pairs[b].paragraph < pairs[a].paragraph && pairs[b].block < pairs[a].block && pairs[b].best > bestBefore {
+                bestBefore = pairs[b].best
+                previous = b
+            }
+            pairs[a].best = pairs[a].weight + bestBefore
+            pairs[a].previous = previous
+        }
+
+        var matches = [Int?](repeating: nil, count: paragraphs.count)
+        var cursor = pairs.indices.max { pairs[$0].best < pairs[$1].best }
+        while let i = cursor {
+            matches[pairs[i].paragraph] = pairs[i].block
+            cursor = pairs[i].previous
+        }
+
+        // A short line ahead of the first substantial match is too ambiguous
+        // to trust (it may be nav chrome); leave it to the plain fallback.
+        for (index, paragraph) in paragraphs.enumerated() {
+            if normalize(paragraph).count >= anchorMinLength { break }
+            matches[index] = nil
+        }
+        return matches
     }
 
     // MARK: - Lede recovery
@@ -188,6 +240,20 @@ enum JSONLDRenderer {
     }
 
     // MARK: - Plain-text helpers
+
+    /// Every plausible paragraph split of a plain-text body, most-likely
+    /// first: blank-line separated (when the body has blank lines), then one
+    /// paragraph per line.
+    static func candidateSplits(_ text: String) -> [[String]] {
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+        let clean: (String) -> String = { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var splits: [[String]] = []
+        if normalized.contains("\n\n") {
+            splits.append(normalized.components(separatedBy: "\n\n").map(clean).filter { !$0.isEmpty })
+        }
+        splits.append(normalized.components(separatedBy: "\n").map(clean).filter { !$0.isEmpty })
+        return splits
+    }
 
     /// Split a plain-text body into paragraphs: blank-line separated when
     /// available, else one per line (Wired emits the latter).
